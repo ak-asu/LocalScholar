@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quizzer</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Quizzer</h1>
+      <div id="status"></div>
+    </header>
+
+    <section id="analyze">
+      <label>
+        Source:
+        <select id="source">
+          <option value="selection">Selection (if any)</option>
+          <option value="page" selected>Whole page</option>
+        </select>
+      </label>
+      <label>
+        Type:
+        <select id="sum-type">
+          <option value="tldr">tldr</option>
+          <option value="key-points" selected>key-points</option>
+          <option value="headline">headline</option>
+          <option value="teaser">teaser</option>
+        </select>
+      </label>
+      <label>
+        Length:
+        <select id="sum-length">
+          <option value="short">short</option>
+          <option value="medium" selected>medium</option>
+          <option value="long">long</option>
+        </select>
+      </label>
+      <label>
+        Format:
+        <select id="sum-format">
+          <option value="markdown" selected>markdown</option>
+          <option value="plain-text">plain-text</option>
+        </select>
+      </label>
+      <button id="run">Summarize</button>
+    </section>
+
+    <section id="output" aria-live="polite"></section>
+  </main>
+  <script src="popup.js" type="module"></script>
+</body>
+</html>
