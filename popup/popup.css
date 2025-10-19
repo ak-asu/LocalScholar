@@ -224,11 +224,14 @@ button[data-loading="true"]::after {
   min-height: 120px;
   max-height: 400px;
   overflow-y: auto;
+  overflow-x: hidden;
   font-size: 13px;
   line-height: 1.6;
   color: var(--text-primary);
   margin-bottom: 12px;
   transition: var(--transition);
+  word-wrap: break-word;
+  overflow-wrap: break-word;
 }
 
 #output:empty::before {
@@ -280,6 +283,62 @@ button[data-loading="true"]::after {
 #translate-controls button {
   padding: 8px 16px;
   white-space: nowrap;
+}
+
+/* Flashcards */
+#flashcards {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.flash-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+
+#fc-generate {
+  grid-column: 1 / -1;
+}
+
+.flash-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* Deck list */
+#decks {
+  margin-top: 12px;
+}
+
+.deck-list {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+}
+
+.deck-item {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+}
+
+.deck-meta {
+  display: grid;
+  gap: 2px;
+}
+
+.deck-actions {
+  display: flex;
+  gap: 8px;
 }
 
 /* Animations */

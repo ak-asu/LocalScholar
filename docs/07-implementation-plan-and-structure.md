@@ -21,10 +21,10 @@ Last updated: 2025-10-18
 ### 2. Flashcards & Overlay ⏳ IN PROGRESS
    - ✅ Prompt API module ready (`utils/ai-pipeline.js`)
    - ✅ Structured output schema for MCQ
-   - ⏳ Popup UI for flashcard generation
-   - ⏳ Overlay UI with keyboard a11y
-   - ⏳ Local storage for decks
-   - ⏳ Output language selector integration
+   - ✅ Popup UI for flashcard generation
+   - ✅ Overlay UI with keyboard a11y
+   - ✅ Local storage for decks
+   - ✅ Output language selector integration
 
 ### 3. Report Queue & Writer 📋 PLANNED
    - Collection model

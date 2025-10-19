@@ -1,0 +1,144 @@
+/* Quizzer Overlay Styles (in shadow DOM friendly reset) */
+
+:host {
+  all: initial;
+}
+
+.qz-container {
+  font-family: 'Segoe UI', system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  color-scheme: light dark;
+}
+
+.qz-card {
+  background: Canvas;
+  color: CanvasText;
+  border: 1px solid ButtonBorder;
+  border-radius: 12px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+  padding: 16px;
+  width: 360px;
+}
+
+.qz-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.qz-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.qz-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.qz-btn {
+  all: unset;
+  background: Highlight;
+  color: HighlightText;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.qz-btn.secondary {
+  background: ButtonFace;
+  color: ButtonText;
+  border: 1px solid ButtonBorder;
+}
+
+.qz-btn[disabled] {
+  opacity: .6;
+  cursor: not-allowed;
+}
+
+.qz-body {
+  background: Field;
+  color: FieldText;
+  border: 1px solid ButtonBorder;
+  border-radius: 8px;
+  padding: 12px;
+  max-height: 300px;
+  overflow: auto;
+}
+
+.qz-summary {
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.qz-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.qz-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(26, 115, 232, 0.3);
+  border-radius: 50%;
+  border-top-color: rgb(26, 115, 232);
+  animation: qz-spin 0.6s linear infinite;
+}
+
+@keyframes qz-spin { to { transform: rotate(360deg); } }
+
+.qz-flashcard {
+  display: grid;
+  gap: 8px;
+}
+
+.qz-options {
+  display: grid;
+  gap: 6px;
+}
+
+.qz-option {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.qz-radio {
+  margin-top: 3px;
+}
+
+.qz-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.qz-index {
+  font-variant-numeric: tabular-nums;
+  opacity: .7;
+}
+
+.qz-close {
+  all: unset;
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+}
+
+.qz-close:focus-visible {
+  outline: 2px solid Highlight;
+  outline-offset: 2px;
+}
+
+/* Reduce motion */
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
