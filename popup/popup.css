@@ -92,6 +92,10 @@ h1 {
   text-align: right;
 }
 
+#settings-btn {
+  margin-left: 8px;
+}
+
 #status:not(:empty) {
   animation: fadeIn 0.2s ease-in;
 }
@@ -302,11 +306,6 @@ button[data-loading="true"]::after {
   grid-column: 1 / -1;
 }
 
-.flash-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-}
 
 /* Deck list */
 #decks {
@@ -341,6 +340,19 @@ button[data-loading="true"]::after {
   gap: 8px;
 }
 
+/* Settings */
+#settings[hidden] { display: none; }
+.settings-grid {
+  display: grid;
+  gap: 12px;
+}
+.settings-grid fieldset {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+.settings-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+
 /* Animations */
 @keyframes fadeIn {
   from {
@@ -374,6 +386,101 @@ button[data-loading="true"]::after {
 :focus-visible {
   outline: 2px solid var(--accent-color);
   outline-offset: 2px;
+}
+
+/* Queue and Reports */
+#queue, #reports {
+  margin-top: 12px;
+}
+
+#queue h2, #reports h2 {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin: 0 0 8px 0;
+}
+
+.queue-actions, .queue-generate {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.queue-generate {
+  align-items: center;
+}
+
+.queue-generate label {
+  flex-direction: row;
+  align-items: center;
+  margin: 0;
+  gap: 8px;
+}
+
+.queue-generate label span {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.queue-generate select {
+  min-width: 120px;
+}
+
+.queue-list, .report-list {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0 0 8px 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.queue-item, .report-item {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  gap: 8px;
+}
+
+.queue-meta, .report-meta {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.queue-title, .report-title {
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queue-details, .report-details {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queue-actions button, .report-actions button {
+  padding: 6px 12px;
+  font-size: 11px;
+}
+
+.report-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 /* Utility Classes */

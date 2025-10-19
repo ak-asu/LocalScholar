@@ -1,12 +1,17 @@
 // Popup logic: Summarizer integration with availability gating and streaming
 import { setupThemeListener, setLoadingState, setTextContent } from '../utils/ui-helpers.js';
-import { saveDeck, listDecks, deleteDeck, createDeckId, validateFlashcards } from '../data/storage.js';
+import {
+  saveDeck, listDecks, deleteDeck, createDeckId, validateFlashcards,
+  addToCollection, listCollection, removeFromCollection, clearCollection,
+  saveReport, listReports, deleteReport
+} from '../data/storage.js';
 
 // DOM Elements cache
 const elements = {
   status: null,
   output: null,
   runBtn: null,
+  settingsBtn: null,
   translateControls: null,
   translateLanguage: null,
   translateBtn: null,
@@ -25,6 +30,7 @@ function initElements() {
   elements.status = document.getElementById('status');
   elements.output = document.getElementById('output');
   elements.runBtn = document.getElementById('run');
+  elements.settingsBtn = document.getElementById('settings-btn');
   elements.translateControls = document.getElementById('translate-controls');
   elements.translateLanguage = document.getElementById('translate-language');
   elements.translateBtn = document.getElementById('translate-btn');
@@ -39,10 +45,25 @@ function initElements() {
   elements.fcDifficulty = document.getElementById('fc-difficulty');
   elements.fcLanguage = document.getElementById('fc-language');
   elements.fcGenerate = document.getElementById('fc-generate');
-  elements.fcResults = document.getElementById('fc-results');
-  elements.fcSave = document.getElementById('fc-save');
-  elements.fcShow = document.getElementById('fc-show');
   elements.deckList = document.getElementById('deck-list');
+  elements.settingsView = document.getElementById('settings');
+  elements.analyzeView = document.getElementById('analyze');
+  elements.flashcardsView = document.getElementById('flashcards');
+  elements.decksView = document.getElementById('decks');
+  elements.settingsSave = document.getElementById('settings-save');
+  elements.settingsBack = document.getElementById('settings-back');
+
+  // Queue
+  elements.queueView = document.getElementById('queue');
+  elements.queueList = document.getElementById('queue-list');
+  elements.queueAddCurrent = document.getElementById('queue-add-current');
+  elements.queueClear = document.getElementById('queue-clear');
+  elements.queueGenerateReport = document.getElementById('queue-generate-report');
+  elements.reportLanguage = document.getElementById('report-language');
+
+  // Reports
+  elements.reportsView = document.getElementById('reports');
+  elements.reportList = document.getElementById('report-list');
 }
 
 // Tab utilities
@@ -147,6 +168,45 @@ function getFormValues() {
   };
 }
 
+// Settings persistence
+const SETTINGS_KEY = 'quizzer.settings';
+async function loadSettings() {
+  const data = await chrome.storage.local.get({ [SETTINGS_KEY]: null });
+  const s = data[SETTINGS_KEY];
+  if (!s) return;
+  const { source, type, length, format, outputLanguage, fcCount, fcDifficulty, fcLanguage } = s;
+  if (source) elements.source.value = source;
+  if (type) elements.sumType.value = type;
+  if (length) elements.sumLength.value = length;
+  if (format) elements.sumFormat.value = format;
+  if (outputLanguage) elements.outputLanguage.value = outputLanguage;
+  if (fcCount) elements.fcCount.value = String(fcCount);
+  if (fcDifficulty) elements.fcDifficulty.value = fcDifficulty;
+  if (fcLanguage) elements.fcLanguage.value = fcLanguage;
+}
+
+async function saveSettings() {
+  const settings = {
+    source: elements.source.value,
+    type: elements.sumType.value,
+    length: elements.sumLength.value,
+    format: elements.sumFormat.value,
+    outputLanguage: elements.outputLanguage.value,
+    fcCount: parseInt(elements.fcCount.value, 10) || 5,
+    fcDifficulty: elements.fcDifficulty.value,
+    fcLanguage: elements.fcLanguage.value
+  };
+  await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
+}
+
+function showSettings(show) {
+  if (!elements.settingsView) return;
+  elements.settingsView.hidden = !show;
+  elements.analyzeView.style.display = show ? 'none' : '';
+  elements.flashcardsView.style.display = show ? 'none' : '';
+  elements.decksView.style.display = show ? 'none' : '';
+}
+
 // Show/hide translate controls
 function setTranslateControlsVisible(visible, language = 'en') {
   if (elements.translateControls) {
@@ -233,8 +293,7 @@ async function refreshDeckList() {
 async function generateFlashcards() {
   setStatus('Preparing…');
   setLoadingState(elements.fcGenerate, true);
-  elements.fcSave.disabled = true;
-  elements.fcShow.disabled = true;
+  // no-op: save/show removed
   lastDeck = null;
 
   const source = elements.source?.value || 'page';
@@ -381,28 +440,7 @@ ${text}`;
   }
 }
 
-async function saveLastDeck() {
-  if (!lastDeck) return;
-  try {
-    const saved = await saveDeck(lastDeck);
-    setStatus('Deck saved');
-    elements.fcSave.disabled = true;
-  } catch (e) {
-    console.error('Save deck failed:', e);
-    setStatus('Save failed');
-  }
-}
-
-async function showDeckInPage() {
-  if (!lastDeck) return;
-  try {
-    await sendMessageToTab({ type: 'QUIZZER_SHOW_DECK', deck: lastDeck });
-    setStatus('Overlay opened');
-  } catch (e) {
-    console.warn('Could not show overlay:', e);
-    setStatus('Cannot show overlay here');
-  }
-}
+// removed: saveLastDeck and showDeckInPage (auto flow handles it)
 
 async function runEnhancedPipeline(source, type, length, format, outputLanguage) {
   // Get enhanced content extraction from content script
@@ -646,6 +684,296 @@ async function translateSummary() {
   }
 }
 
+// ===== Queue Management =====
+
+/**
+ * Refreshes the queue list UI
+ */
+async function refreshQueueList() {
+  if (!elements.queueList) return;
+  const items = await listCollection();
+  elements.queueList.innerHTML = '';
+
+  if (!items || items.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'queue-item';
+    li.textContent = 'Queue is empty. Add pages to build a report.';
+    elements.queueList.appendChild(li);
+    return;
+  }
+
+  for (const item of items) {
+    const li = document.createElement('li');
+    li.className = 'queue-item';
+
+    const meta = document.createElement('div');
+    meta.className = 'queue-meta';
+
+    const title = document.createElement('div');
+    title.className = 'queue-title';
+    title.textContent = item.title || 'Untitled';
+
+    const details = document.createElement('div');
+    details.className = 'queue-details';
+    details.textContent = `${item.sourceType} • ${item.textExcerpt.slice(0, 80)}...`;
+
+    meta.append(title, details);
+
+    const actions = document.createElement('div');
+    actions.className = 'queue-actions';
+
+    const removeBtn = document.createElement('button');
+    removeBtn.textContent = 'Remove';
+    removeBtn.addEventListener('click', async () => {
+      await removeFromCollection(item.id);
+      await refreshQueueList();
+    });
+
+    actions.appendChild(removeBtn);
+    li.append(meta, actions);
+    elements.queueList.appendChild(li);
+  }
+}
+
+/**
+ * Adds current page to the queue
+ */
+async function addCurrentToQueue() {
+  setStatus('Adding to queue...');
+  setLoadingState(elements.queueAddCurrent, true);
+
+  try {
+    const source = elements.source?.value || 'page';
+    const extraction = await getEnhancedContent(source);
+
+    if (!extraction.valid) {
+      throw new Error(extraction.error || 'Invalid content');
+    }
+
+    // Combine all chunks into full text
+    const fullText = extraction.chunks.map(c => c.text).join('\n\n');
+    const { metadata } = extraction;
+
+    const item = {
+      url: metadata?.url || window.location.href,
+      title: metadata?.title || 'Untitled',
+      sourceType: source === 'selection' ? 'selection' : 'page',
+      text: fullText,
+      textExcerpt: fullText.slice(0, 200)
+    };
+
+    await addToCollection(item);
+    await refreshQueueList();
+    setStatus('Added to queue');
+  } catch (e) {
+    console.error('Failed to add to queue:', e);
+    setStatus(`Error: ${e.message}`);
+  } finally {
+    setLoadingState(elements.queueAddCurrent, false);
+  }
+}
+
+/**
+ * Clears the entire queue
+ */
+async function clearQueue() {
+  if (!confirm('Clear all items from the queue?')) return;
+  await clearCollection();
+  await refreshQueueList();
+  setStatus('Queue cleared');
+}
+
+/**
+ * Generates a report from the queue
+ */
+async function generateReport() {
+  setStatus('Preparing report...');
+  setLoadingState(elements.queueGenerateReport, true);
+
+  try {
+    const items = await listCollection();
+    if (!items || items.length === 0) {
+      throw new Error('Queue is empty. Add pages first.');
+    }
+
+    if (items.length < 2) {
+      throw new Error('Add at least 2 items to generate a report.');
+    }
+
+    // Check Prompt API availability
+    if (!('LanguageModel' in self)) {
+      throw new Error('Prompt API not supported in this Chrome');
+    }
+
+    const availability = await LanguageModel.availability();
+    if (availability === 'unavailable') {
+      throw new Error('Language Model unavailable on this device');
+    }
+
+    const outputLanguage = elements.reportLanguage?.value || 'en';
+
+    setStatus('Synthesizing report...');
+    const report = await synthesizeReport(items, outputLanguage);
+
+    await saveReport(report);
+    await refreshReportList();
+    setStatus('Report generated');
+
+    // Show report in output area
+    renderOutput(report.content);
+  } catch (e) {
+    console.error('Report generation failed:', e);
+    setStatus(`Error: ${e.message}`);
+  } finally {
+    setLoadingState(elements.queueGenerateReport, false);
+  }
+}
+
+/**
+ * Synthesizes a report from collection items using Prompt API
+ */
+async function synthesizeReport(items, outputLanguage = 'en') {
+  // Prepare sources text
+  const sourcesText = items.map((item, idx) => {
+    return `[${idx + 1}] ${item.title}\nURL: ${item.url}\n\n${item.fullText}\n\n---\n`;
+  }).join('\n');
+
+  // Create citations
+  const citations = items.map((item, idx) => ({
+    index: idx + 1,
+    title: item.title,
+    url: item.url
+  }));
+
+  // Create LLM session
+  const supported = new Set(['en', 'es', 'ja']);
+  const outLang = supported.has((outputLanguage || 'en').toLowerCase()) ? (outputLanguage || 'en').toLowerCase() : 'en';
+
+  const session = await LanguageModel.create({
+    temperature: 0.7,
+    topK: 40,
+    outputLanguage: outLang,
+    systemPrompt: `You are an expert research assistant. Synthesize information from multiple sources into a coherent, well-structured report.
+
+Guidelines:
+- Create a clear, informative report that synthesizes key insights from all sources
+- Use markdown formatting with headings, lists, and emphasis
+- Include citations using [1], [2], etc. to reference sources
+- Organize information logically with an introduction, body sections, and conclusion
+- Highlight important insights and connections between sources
+- Maintain an objective, informative tone`
+  });
+
+  try {
+    const prompt = `Please synthesize the following ${items.length} sources into a comprehensive report:
+
+${sourcesText}
+
+Create a well-structured report that:
+1. Introduces the topic/theme across all sources
+2. Presents key findings and insights organized by theme
+3. Includes citations [1], [2], etc. when referencing specific sources
+4. Concludes with a summary of main takeaways
+
+Report:`;
+
+    const content = await session.prompt(prompt);
+
+    // Append citations section
+    const citationsMarkdown = '\n\n## References\n\n' +
+      citations.map(c => `[${c.index}] [${c.title}](${c.url})`).join('\n');
+
+    return {
+      title: `Report - ${new Date().toLocaleDateString()}`,
+      content: content + citationsMarkdown,
+      sourceIds: items.map(i => i.id),
+      citations
+    };
+  } finally {
+    if (session.destroy) session.destroy();
+  }
+}
+
+// ===== Report Management =====
+
+/**
+ * Refreshes the report list UI
+ */
+async function refreshReportList() {
+  if (!elements.reportList) return;
+  const reports = await listReports();
+  elements.reportList.innerHTML = '';
+
+  if (!reports || reports.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'report-item';
+    li.textContent = 'No reports yet.';
+    elements.reportList.appendChild(li);
+    return;
+  }
+
+  for (const report of reports) {
+    const li = document.createElement('li');
+    li.className = 'report-item';
+
+    const meta = document.createElement('div');
+    meta.className = 'report-meta';
+
+    const title = document.createElement('div');
+    title.className = 'report-title';
+    title.textContent = report.title;
+
+    const details = document.createElement('div');
+    details.className = 'report-details';
+    details.textContent = `${report.citations?.length || 0} sources • ${new Date(report.createdAt).toLocaleDateString()}`;
+
+    meta.append(title, details);
+
+    const actions = document.createElement('div');
+    actions.className = 'report-actions';
+
+    const viewBtn = document.createElement('button');
+    viewBtn.textContent = 'View';
+    viewBtn.addEventListener('click', () => {
+      renderOutput(report.content);
+      setStatus('Viewing report');
+    });
+
+    const downloadBtn = document.createElement('button');
+    downloadBtn.textContent = 'Download';
+    downloadBtn.addEventListener('click', () => downloadReport(report));
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.textContent = 'Delete';
+    deleteBtn.addEventListener('click', async () => {
+      if (confirm('Delete this report?')) {
+        await deleteReport(report.id);
+        await refreshReportList();
+      }
+    });
+
+    actions.append(viewBtn, downloadBtn, deleteBtn);
+    li.append(meta, actions);
+    elements.reportList.appendChild(li);
+  }
+}
+
+/**
+ * Downloads a report as a markdown file
+ */
+function downloadReport(report) {
+  const blob = new Blob([report.content], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${report.title.replace(/[^a-z0-9]/gi, '_')}.md`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  setStatus('Report downloaded');
+}
+
 // Initialize on DOM load
 document.addEventListener('DOMContentLoaded', async () => {
   initElements();
@@ -675,9 +1003,27 @@ document.addEventListener('DOMContentLoaded', async () => {
   elements.runBtn.addEventListener('click', run);
   elements.translateBtn.addEventListener('click', translateSummary);
   elements.fcGenerate.addEventListener('click', generateFlashcards);
-  elements.fcSave.addEventListener('click', saveLastDeck);
-  elements.fcShow.addEventListener('click', showDeckInPage);
+  // Save/Show buttons removed
 
   // Load deck list
   await refreshDeckList();
+
+  // Load queue and reports
+  await refreshQueueList();
+  await refreshReportList();
+
+  // Queue wiring
+  elements.queueAddCurrent.addEventListener('click', addCurrentToQueue);
+  elements.queueClear.addEventListener('click', clearQueue);
+  elements.queueGenerateReport.addEventListener('click', generateReport);
+
+  // Settings wiring
+  await loadSettings();
+  elements.settingsBtn.addEventListener('click', () => showSettings(true));
+  elements.settingsBack.addEventListener('click', () => showSettings(false));
+  elements.settingsSave.addEventListener('click', async () => {
+    await saveSettings();
+    setStatus('Settings saved');
+    showSettings(false);
+  });
 });

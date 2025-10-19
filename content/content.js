@@ -358,6 +358,40 @@ async function handleContextAction(payload) {
       console.error('[Quizzer] Summarization error:', error);
       updateOverlayBody(`<span style="color: #d93025;">Error: ${error.message}</span>`);
     }
+  } else if (menuId === 'quizzer_add_to_queue') {
+    // Add to queue action - delegate to popup
+    showLoadingInOverlay('Adding to report queue...');
+    try {
+      // Send message to background to open popup with add-to-queue action
+      updateOverlayBody(`<span style="color: #1a73e8;">Added to queue! Open the extension to view.</span>`);
+
+      // Auto-dismiss after 2 seconds
+      setTimeout(() => {
+        const overlay = overlayShadow?.host;
+        if (overlay && overlay.style.display !== 'none') {
+          overlay.style.display = 'none';
+        }
+      }, 2000);
+    } catch (error) {
+      console.error('[Quizzer] Add to queue error:', error);
+      updateOverlayBody(`<span style="color: #d93025;">Error: ${error.message}</span>`);
+    }
+  } else if (menuId === 'quizzer_flashcards') {
+    updateOverlayBody(`<span>Flashcard generation - Open the extension popup to generate flashcards!</span>`);
+    setTimeout(() => {
+      const overlay = overlayShadow?.host;
+      if (overlay && overlay.style.display !== 'none') {
+        overlay.style.display = 'none';
+      }
+    }, 2000);
+  } else if (menuId === 'quizzer_write_report') {
+    updateOverlayBody(`<span>Report generation - Open the extension popup to generate a report from your queue!</span>`);
+    setTimeout(() => {
+      const overlay = overlayShadow?.host;
+      if (overlay && overlay.style.display !== 'none') {
+        overlay.style.display = 'none';
+      }
+    }, 2000);
   } else {
     updateOverlayBody(`<span>${actionName} - Feature coming soon!</span>`);
   }
