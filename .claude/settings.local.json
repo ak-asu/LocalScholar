@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(if not exist \"c:\\Users\\presyze\\Projects\\ASU\\Quizzer\\utils\" mkdir \"c:\\Users\\presyze\\Projects\\ASU\\Quizzer\\utils\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

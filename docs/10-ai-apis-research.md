@@ -4,13 +4,14 @@ Last updated: 2025-10-18
 
 This document summarizes how to enable and integrate the Chrome built‑in AI APIs in a Manifest V3 extension, with links to official docs and practical extension-specific notes.
 
+
 APIs covered
 - Prompt API (LanguageModel)
 - Summarizer API (Summarizer)
 - Writer API (Writer) – origin trial
 - Rewriter API (Rewriter) – origin trial
 - Proofreader API (Proofreader) – origin trial
-- Translator API (Translator)
+- Translator API (Translator) – also used for switching output language of results
 - Language Detector API (LanguageDetector)
 
 ## 1) Eligibility, hardware, and availability
@@ -44,25 +45,32 @@ References
 References
 - Summarizer, Prompt, Writer, Rewriter pages: user activation and monitor examples
 
-## 4) API-by-API integration
+
+## 4) Output language and AI pipeline
+- All AI API calls (Summarizer, Prompt, etc.) must specify an output language code (outputLanguage: [en, es, ja, ...]); default is en, but user can select from top 5 and switch using Translator API.
+- For large/complex pages, implement an AI pipeline: extract and clean up main content (remove nav, ads, scripts, etc.), chunk content as needed, process in phases, and merge results.
+
+## 5) API-by-API integration
+
 
 ### Prompt API
 - Status: Stable for extensions in Chrome 138+
 - Namespace: `LanguageModel`
 - Steps: `await LanguageModel.availability()` -> `await LanguageModel.create({ ... })` -> `session.prompt()` or `promptStreaming()`
-- Features: sessions, temperature/topK, initial prompts, structured output via `responseConstraint` (JSON Schema), streaming
-- Use cases in this project: MCQ generation with JSON Schema; report synthesis
+- Features: sessions, temperature/topK, initial prompts, structured output via `responseConstraint` (JSON Schema), streaming, outputLanguage
+- Use cases in this project: MCQ generation with JSON Schema; report synthesis; always specify outputLanguage (default en, user-selectable)
 - Extension notes: run in popup or content script; manage session lifecycle; avoid SW
 
 Docs: developer.chrome.com/docs/ai/prompt-api
 
+
 ### Summarizer API
 - Status: Stable in Chrome 138+
 - Namespace: `Summarizer`
-- Steps: `await Summarizer.availability()` -> `await Summarizer.create({ type, length, format, sharedContext, monitor })` -> `summarize()` or `summarizeStreaming()`
+- Steps: `await Summarizer.availability()` -> `await Summarizer.create({ type, length, format, outputLanguage, sharedContext, monitor })` -> `summarize()` or `summarizeStreaming()`
 - Immutable options per summarizer instance; create a new instance for different parameters
 - Use cases: tldr, key-points, headline/teaser with short/medium/long
-- Extension notes: prefer `innerText` over `innerHTML`; chunk long pages; stream output
+- Extension notes: prefer `innerText` over `innerHTML`; chunk long pages; stream output; always specify outputLanguage (default en, user-selectable)
 
 Docs: developer.chrome.com/docs/ai/summarizer-api
 
@@ -90,11 +98,12 @@ Docs: developer.chrome.com/docs/ai/rewriter-api
 
 Docs: developer.chrome.com/docs/ai/proofreader-api
 
+
 ### Translator API
 - Status: Stable in Chrome 138+
 - Namespace: `Translator`
-- Use cases: translate summaries/reports to user language
-- Extension notes: optional, post-process step, respect user language from settings
+- Use cases: translate summaries/reports/flashcards to user-selected language; allow user to quickly switch output language for any result
+- Extension notes: always offer top 5 language choices (en, es, ja, fr, de or similar); integrate quick switch in popup/overlay
 
 Docs: developer.chrome.com/docs/ai/translator-api
 

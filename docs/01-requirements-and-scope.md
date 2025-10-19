@@ -21,14 +21,17 @@ A Chrome MV3 extension that analyzes web pages or selected text, provides summar
 - Complex spaced-repetition algorithms (basic stats only)
 - Full side panel app (may add later)
 
+
 ## Detailed requirements
 - Selection-aware: if user selects text, all actions operate on selection; else on page text
 - Popup actions: Analyze (summaries), Flashcards (generate/play), Report (queue and compose), History (optional), Settings link
 - Overlay: Draggable, closable, keyboard navigable; shows flashcards without breaking page styles
 - Context menu: Summarize, Create Flashcards, Add to Report Queue, Write Report
-- Settings: user profile, tone, language, custom instructions; defaults for summary/flashcards/report; data export/import; clear data
+- Settings: user profile, tone, language (output language selector, top 5, default en, switchable with Translator API), custom instructions; defaults for summary/flashcards/report; data export/import; clear data
 - Local storage: settings, collected items, summaries, flashcards, reports; IndexedDB for large text blobs
 - AI usage: built-in APIs; no workers; user activation required; inform about download
+- Output language: All AI outputs (summaries, flashcards, reports) must specify a supported output language code ([en, es, ja, ...]); user can switch output language and view translations using the Translator API.
+- Content extraction pipeline: Before summarization or other AI calls, extract and clean up page content (remove unneeded tags, scripts, nav, ads, etc.), then chunk content as needed; process in phases/chunks and merge results for large pages.
 
 ## Acceptance criteria
 - Actions use selection when present; otherwise page
