@@ -213,6 +213,7 @@ function getEnhancedText(source) {
 // Shadow DOM overlay helpers
 let overlayRoot = null;
 let overlayShadow = null;
+let currentOperation = null; // Track current AI operation for cancellation
 
 function ensureShadowOverlay() {
   if (overlayRoot && document.body.contains(overlayRoot)) return overlayRoot;
@@ -244,16 +245,16 @@ function ensureShadowOverlay() {
   const actions = document.createElement('div');
   actions.className = 'qz-actions';
   const close = document.createElement('button');
+  close.type = 'button'; // Prevent form submission
   close.className = 'qz-close qz-btn secondary';
   close.setAttribute('aria-label', 'Close overlay');
   close.textContent = '×';
   close.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (overlayRoot && overlayRoot.parentNode) {
-      overlayRoot.parentNode.removeChild(overlayRoot);
-    }
-  });
+    e.stopImmediatePropagation(); // Stop all event propagation
+    closeOverlay();
+  }, { capture: true });
   actions.appendChild(close);
   header.append(title, actions);
 
@@ -285,6 +286,47 @@ function showLoadingInOverlay(message) {
   `);
 }
 
+function closeOverlay() {
+  console.log('[Quizzer] Closing overlay...');
+
+  // Cancel any ongoing operation
+  if (currentOperation) {
+    console.log('[Quizzer] Cancelling operation:', currentOperation.type);
+
+    // Mark as cancelled first (prevents race conditions)
+    currentOperation.cancelled = true;
+
+    // Destroy AI session if exists
+    if (currentOperation.session && typeof currentOperation.session.destroy === 'function') {
+      try {
+        currentOperation.session.destroy();
+        console.log('[Quizzer] AI session destroyed');
+      } catch (e) {
+        // Ignore abort errors - they're expected
+        if (e.name !== 'AbortError' && !e.message?.includes('abort')) {
+          console.warn('[Quizzer] Error destroying session:', e);
+        }
+      }
+    }
+
+    currentOperation = null;
+  }
+
+  // Remove overlay from DOM
+  if (overlayRoot && overlayRoot.parentNode) {
+    try {
+      overlayRoot.parentNode.removeChild(overlayRoot);
+      overlayRoot = null;
+      overlayShadow = null;
+      console.log('[Quizzer] Overlay removed from DOM');
+    } catch (e) {
+      console.warn('[Quizzer] Error removing overlay:', e);
+    }
+  }
+
+  console.log('[Quizzer] Overlay closed and cleaned up');
+}
+
 async function handleContextAction(payload) {
   const { menuId, selectionText } = payload || {};
   ensureShadowOverlay();
@@ -301,11 +343,24 @@ async function handleContextAction(payload) {
 
   // Only handle summarize action for now
   if (menuId === 'quizzer_summarize') {
+    // Initialize operation tracking
+    currentOperation = {
+      type: 'summarize',
+      cancelled: false,
+      session: null
+    };
+
     showLoadingInOverlay(`Summarizing ${source}...`);
 
     try {
       // Get the content
       const extraction = getEnhancedText(source);
+
+      // Check if cancelled
+      if (currentOperation?.cancelled) {
+        console.log('[Quizzer] Operation cancelled by user');
+        return;
+      }
 
       console.log('[Quizzer] Extracted content:', {
         textLength: extraction.text?.length || 0,
@@ -314,12 +369,20 @@ async function handleContextAction(payload) {
 
       if (!extraction.valid || !extraction.text) {
         updateOverlayBody(`<span style="color: #d93025;">Error: ${extraction.error || 'No content to summarize'}</span>`);
+        currentOperation = null;
         return;
       }
 
       // Check if Summarizer API is available
       if (!('Summarizer' in self)) {
         updateOverlayBody(`<span style="color: #d93025;">Summarizer API not available in this Chrome version.</span>`);
+        currentOperation = null;
+        return;
+      }
+
+      // Check if cancelled
+      if (currentOperation?.cancelled) {
+        console.log('[Quizzer] Operation cancelled by user');
         return;
       }
 
@@ -327,6 +390,13 @@ async function handleContextAction(payload) {
       const availability = await self.Summarizer.availability();
       if (availability === 'unavailable') {
         updateOverlayBody(`<span style="color: #d93025;">Summarizer unavailable on this device.</span>`);
+        currentOperation = null;
+        return;
+      }
+
+      // Check if cancelled before creating session
+      if (currentOperation?.cancelled) {
+        console.log('[Quizzer] Operation cancelled by user');
         return;
       }
 
@@ -337,12 +407,29 @@ async function handleContextAction(payload) {
         outputLanguage: 'en'
       });
 
+      // Store session for potential cleanup
+      currentOperation.session = summarizer;
+
+      // Check if cancelled after creating session
+      if (currentOperation?.cancelled) {
+        console.log('[Quizzer] Operation cancelled by user');
+        if (summarizer.destroy) summarizer.destroy();
+        return;
+      }
+
       showLoadingInOverlay('Generating summary...');
 
       // Summarize
       const summary = await summarizer.summarize(extraction.text, {
         context: 'Audience: general web reader.'
       });
+
+      // Check if cancelled after summarization
+      if (currentOperation?.cancelled) {
+        console.log('[Quizzer] Operation cancelled by user');
+        if (summarizer.destroy) summarizer.destroy();
+        return;
+      }
 
       // Log results
       console.log('[Quizzer] Summary generated:', summary);
@@ -354,9 +441,26 @@ async function handleContextAction(payload) {
       if (summarizer.destroy) {
         summarizer.destroy();
       }
+
+      // Clear operation tracking
+      currentOperation = null;
     } catch (error) {
+      // Check if error is due to cancellation
+      if (currentOperation?.cancelled) {
+        console.log('[Quizzer] Operation cancelled by user');
+        return;
+      }
+
+      // Check if error is an abort error (happens when AI session is destroyed)
+      if (error.name === 'AbortError' || error.message?.includes('abort')) {
+        console.log('[Quizzer] Operation aborted');
+        currentOperation = null;
+        return;
+      }
+
       console.error('[Quizzer] Summarization error:', error);
       updateOverlayBody(`<span style="color: #d93025;">Error: ${error.message}</span>`);
+      currentOperation = null;
     }
   } else if (menuId === 'quizzer_add_to_queue') {
     // Add to queue action - delegate to popup
@@ -495,7 +599,7 @@ function showDeckOverlay(deck) {
       if (e.key === 'ArrowLeft') { if (index>0) { index--; render(); e.preventDefault(); } }
       if (e.key === 'ArrowRight') { if (index<deck.cards.length-1) { index++; render(); e.preventDefault(); } }
       if (e.key === ' ') { const exp = overlayShadow.getElementById('qz-explanation'); exp.style.display = exp.style.display === 'none' ? 'block' : 'none'; e.preventDefault(); }
-      if (e.key === 'Escape') { if (overlayRoot) overlayRoot.remove(); }
+      if (e.key === 'Escape') { closeOverlay(); }
     };
   }
 
