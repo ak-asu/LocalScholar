@@ -40,6 +40,9 @@ export async function processSummarization(options) {
     onChunkComplete = () => {}
   } = options;
 
+  // Ensure outputLanguage is always set (safety check)
+  const safeOutputLanguage = outputLanguage || 'en';
+
   onProgress('Extracting content...', 5);
 
   // Extract and validate content
@@ -63,12 +66,19 @@ export async function processSummarization(options) {
 
   // Check Summarizer availability
   if (!('Summarizer' in self)) {
-    throw new Error('Summarizer API not supported in this browser');
+    throw new Error('Summarizer API not supported in this browser. Enable "Optimization Guide On Device Model" in chrome://flags and restart Chrome');
   }
 
   const availability = await Summarizer.availability();
-  if (availability === 'unavailable') {
+  console.log('[Quizzer] Summarizer.availability() returned:', availability);
+
+  // Availability states: 'readily', 'after-download', 'no'
+  if (availability === 'no') {
     throw new Error('Summarizer unavailable on this device');
+  }
+
+  if (availability === 'after-download') {
+    onProgress('Summarizer model will download on first use...', 12);
   }
 
   // If single chunk, process directly
@@ -78,7 +88,7 @@ export async function processSummarization(options) {
       type,
       length,
       format,
-      outputLanguage,
+      outputLanguage: safeOutputLanguage,
       onProgress: (percent) => onProgress('Summarizing...', 20 + percent * 0.7)
     });
 
@@ -109,7 +119,7 @@ export async function processSummarization(options) {
       type,
       length: 'short', // Use shorter summaries for chunks
       format,
-      outputLanguage,
+      outputLanguage: safeOutputLanguage,
       onProgress: (percent) => onProgress(
         `Summarizing chunk ${i + 1}/${chunks.length}...`,
         baseProgress + percent * progressPerChunk
@@ -132,7 +142,7 @@ export async function processSummarization(options) {
     type,
     length,
     format,
-    outputLanguage,
+    outputLanguage: safeOutputLanguage,
     originalMetadata: metadata
   });
 
@@ -155,7 +165,7 @@ export async function processSummarization(options) {
  * @param {Object} options - Summarization options
  * @returns {string} - Summary text
  */
-async function summarizeChunk(text, options) {
+async function summarizeChunk(text, options = {}) {
   const {
     type = 'key-points',
     length = 'medium',
@@ -164,17 +174,28 @@ async function summarizeChunk(text, options) {
     onProgress = () => {}
   } = options;
 
-  const summarizer = await Summarizer.create({
+  // Ensure outputLanguage is always set to a valid value - never undefined
+  const safeOutputLanguage = outputLanguage || 'en';
+
+  // Build create options explicitly to ensure outputLanguage is included
+  const createOptions = {
     type,
     length,
     format,
-    outputLanguage,
-    monitor(m) {
+    outputLanguage: safeOutputLanguage
+  };
+
+  // Add monitor if progress callback exists
+  if (onProgress && typeof onProgress === 'function') {
+    createOptions.monitor = (m) => {
       m.addEventListener('downloadprogress', (e) => {
         onProgress(e.loaded);
       });
-    }
-  });
+    };
+  }
+
+  console.log('[Quizzer] Summarizer.create() called with:', createOptions);
+  const summarizer = await Summarizer.create(createOptions);
 
   try {
     // Use streaming for better UX
@@ -278,14 +299,19 @@ export async function processFlashcardGeneration(options) {
 
   onProgress('Preparing flashcard generation...', 10);
 
-  // Check Prompt API availability
-  if (!('LanguageModel' in self)) {
-    throw new Error('Prompt API (LanguageModel) not supported in this browser');
+  // Check Prompt API (LanguageModel) availability - per Chrome AI documentation
+  if (!('ai' in self) || !self.ai?.languageModel) {
+    throw new Error('Prompt API not available. Enable "Optimization Guide On Device Model" in chrome://flags and restart Chrome');
   }
 
-  const availability = await LanguageModel.availability();
-  if (availability === 'unavailable') {
+  const capabilities = await self.ai.languageModel.capabilities();
+  if (capabilities.available === 'no') {
     throw new Error('Language Model unavailable on this device');
+  }
+
+  // Inform about download if needed
+  if (capabilities.available === 'after-download') {
+    onProgress('Language Model will download on first use...', 15);
   }
 
   const { chunks, metadata } = extraction;
@@ -350,42 +376,11 @@ async function generateFlashcardsFromChunk(text, options) {
     outputLanguage = 'en'
   } = options;
 
-  // Create session with structured output
-  const session = await LanguageModel.create({
+  // Create session with LanguageModel API (self.ai per documentation)
+  const session = await self.ai.languageModel.create({
     temperature: 0.7,
     topK: 40,
-    outputLanguage,
-    systemPrompt: 'You are a skilled educator. Generate high-quality multiple-choice questions (MCQ) from the provided text.',
-    responseConstraint: {
-      type: 'json-schema',
-      schema: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            question: { type: 'string', description: 'The question text' },
-            options: {
-              type: 'array',
-              items: { type: 'string' },
-              minItems: 4,
-              maxItems: 4,
-              description: 'Four answer options'
-            },
-            answer: {
-              type: 'integer',
-              minimum: 0,
-              maximum: 3,
-              description: 'Index of correct answer (0-3)'
-            },
-            explanation: {
-              type: 'string',
-              description: 'Brief explanation of the correct answer'
-            }
-          },
-          required: ['question', 'options', 'answer']
-        }
-      }
-    }
+    systemPrompt: 'You are a skilled educator. Generate high-quality multiple-choice questions (MCQ) from the provided text in valid JSON format.'
   });
 
   try {
@@ -429,6 +424,157 @@ ${text}`;
     return flashcards;
   } finally {
     // Clean up session
+    if (session.destroy) {
+      session.destroy();
+    }
+  }
+}
+
+/**
+ * Processes report generation from collection items
+ * @param {Object} options - Processing options
+ * @param {Array} options.items - Collection items to synthesize
+ * @param {string} options.outputLanguage - Output language code
+ * @param {Function} options.onProgress - Progress callback
+ * @returns {Object} - { report: string, citations: array, metadata: object }
+ */
+export async function processReportGeneration(options) {
+  const {
+    items = [],
+    outputLanguage = 'en',
+    customInstructions = '',
+    onProgress = () => {}
+  } = options;
+
+  if (items.length === 0) {
+    throw new Error('No items to generate report from');
+  }
+
+  onProgress('Preparing report generation...', 5);
+
+  // Check Prompt API availability
+  if (!('LanguageModel' in self)) {
+    throw new Error('Prompt API (LanguageModel) not supported in this browser');
+  }
+
+  const availability = await LanguageModel.availability();
+  if (availability === 'unavailable') {
+    throw new Error('Language Model unavailable on this device');
+  }
+
+  onProgress('Analyzing sources...', 10);
+
+  // Prepare content from all items
+  const sources = items.map((item, idx) => ({
+    index: idx + 1,
+    title: item.title || 'Untitled',
+    url: item.url,
+    content: item.fullText || item.text || '',
+    sourceType: item.sourceType || 'page'
+  }));
+
+  // If items already have summaries, use those; otherwise create brief summaries
+  const progressPerItem = 40 / sources.length;
+  const processedSources = [];
+
+  for (let i = 0; i < sources.length; i++) {
+    const source = sources[i];
+    const baseProgress = 10 + (i * progressPerItem);
+
+    onProgress(`Processing source ${i + 1}/${sources.length}...`, baseProgress);
+
+    // Check if content is too long, summarize it first
+    if (estimateTokens(source.content) > 4000) {
+      const summary = await summarizeChunk(source.content, {
+        type: 'key-points',
+        length: 'short',
+        format: 'plain-text',
+        outputLanguage
+      });
+
+      processedSources.push({
+        ...source,
+        summary
+      });
+    } else {
+      processedSources.push({
+        ...source,
+        summary: source.content
+      });
+    }
+  }
+
+  onProgress('Synthesizing report...', 55);
+
+  // Check Prompt API (LanguageModel) availability
+  if (!('ai' in self) || !self.ai?.languageModel) {
+    throw new Error('Prompt API not available for report generation. Enable it in chrome://flags');
+  }
+
+  // Create the report by synthesizing all sources
+  const session = await self.ai.languageModel.create({
+    temperature: 0.7,
+    topK: 40,
+    systemPrompt: 'You are a skilled technical writer. Create comprehensive, well-structured reports that synthesize information from multiple sources.'
+  });
+
+  try {
+    const sourcesText = processedSources.map((s, idx) =>
+      `[Source ${idx + 1}: ${s.title}]\n${s.summary}`
+    ).join('\n\n---\n\n');
+
+    // Build the prompt with optional custom instructions
+    let prompt = `Create a comprehensive report synthesizing the following ${processedSources.length} source(s).
+
+Requirements:
+- Write a cohesive, well-structured report that integrates information from all sources
+- Use clear headings and sections to organize the content
+- Maintain an informative and professional tone
+- Connect related concepts across different sources
+- Do NOT include a references section (it will be added separately)
+- Focus on synthesizing and connecting the information, not just summarizing each source`;
+
+    // Add custom instructions if provided
+    if (customInstructions) {
+      prompt += `\n\nAdditional Instructions:\n${customInstructions}`;
+    }
+
+    prompt += `\n\nSources:
+${sourcesText}
+
+Write the report now:`;
+
+    onProgress('Generating report content...', 70);
+
+    const reportContent = await session.prompt(prompt);
+
+    onProgress('Finalizing report...', 90);
+
+    // Create citations
+    const citations = processedSources.map(s => ({
+      title: s.title,
+      url: s.url,
+      sourceType: s.sourceType
+    }));
+
+    // Add references section
+    const referencesSection = '\n\n## References\n\n' +
+      citations.map((c, idx) => `${idx + 1}. ${c.title} - ${c.url}`).join('\n');
+
+    const finalReport = reportContent + referencesSection;
+
+    onProgress('Complete', 100);
+
+    return {
+      report: finalReport,
+      citations,
+      metadata: {
+        sourceCount: items.length,
+        generatedAt: new Date().toISOString(),
+        outputLanguage
+      }
+    };
+  } finally {
     if (session.destroy) {
       session.destroy();
     }

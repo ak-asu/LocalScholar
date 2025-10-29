@@ -7,7 +7,9 @@ const MENUS = {
   SUMMARIZE: 'quizzer_summarize',
   FLASHCARDS: 'quizzer_flashcards',
   ADD_TO_QUEUE: 'quizzer_add_to_queue',
-  WRITE_REPORT: 'quizzer_write_report',
+  TRANSLATE: 'quizzer_translate',
+  PROOFREAD: 'quizzer_proofread',
+  REWRITE: 'quizzer_rewrite',
 };
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -15,7 +17,9 @@ chrome.runtime.onInstalled.addListener(() => {
     chrome.contextMenus.create({ id: MENUS.SUMMARIZE, title: 'Quizzer: Summarize', contexts: ['selection', 'page'] });
     chrome.contextMenus.create({ id: MENUS.FLASHCARDS, title: 'Quizzer: Create Flashcards', contexts: ['selection', 'page'] });
     chrome.contextMenus.create({ id: MENUS.ADD_TO_QUEUE, title: 'Quizzer: Add to Report Queue', contexts: ['selection', 'page'] });
-    chrome.contextMenus.create({ id: MENUS.WRITE_REPORT, title: 'Quizzer: Write Report', contexts: ['page'] });
+    chrome.contextMenus.create({ id: MENUS.TRANSLATE, title: 'Quizzer: Translate Selection', contexts: ['selection'] });
+    chrome.contextMenus.create({ id: MENUS.PROOFREAD, title: 'Quizzer: Proofread Selection', contexts: ['selection'] });
+    chrome.contextMenus.create({ id: MENUS.REWRITE, title: 'Quizzer: Rewrite Selection', contexts: ['selection'] });
   });
 });
 

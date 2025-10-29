@@ -1,10 +1,9 @@
 /**
- * Quizzer Popup - History & Settings UI
- * Main actions happen via right-click context menu
- * Popup is for viewing history and configuring settings
+ * Quizzer Popup - Enhanced with modals, action buttons, and report generation
  */
 
 import * as storage from '../data/storage.js';
+import { processReportGeneration } from '../utils/ai-pipeline.js';
 
 // Tab switching
 const tabHistory = document.getElementById('tab-history');
@@ -12,6 +11,41 @@ const tabSettings = document.getElementById('tab-settings');
 const viewHistory = document.getElementById('view-history');
 const viewSettings = document.getElementById('view-settings');
 
+// Modal elements
+const modalOverlay = document.getElementById('modal-overlay');
+const modalTitle = document.getElementById('modal-title');
+const modalContent = document.getElementById('modal-content');
+const modalClose = document.getElementById('modal-close');
+const modalOkBtn = document.getElementById('modal-ok-btn');
+const modalCopyBtn = document.getElementById('modal-copy-btn');
+const modalDownloadBtn = document.getElementById('modal-download-btn');
+
+// Current modal context
+let currentModalData = null;
+
+// Settings defaults
+const DEFAULT_SETTINGS = {
+  summaryType: 'key-points',
+  summaryLength: 'medium',
+  summaryFormat: 'markdown',
+  outputLanguage: 'en',
+  fcCount: '5',
+  fcDifficulty: 'medium',
+  fcLanguage: 'en',
+  translationTargetLang: 'es',
+  rewriterTone: 'as-is',
+  rewriterLength: 'as-is',
+  rewriterFormat: 'as-is',
+  enableCaching: true,
+  cacheExpiration: 24,
+  chunkSize: 4000,
+  autoSummarize: false,
+  autoFlashcards: false
+};
+
+const SETTINGS_KEY = 'quizzer.settings';
+
+// Tab switching
 function switchTab(showHistory) {
   if (showHistory) {
     tabHistory.classList.add('active');
@@ -33,22 +67,77 @@ function switchTab(showHistory) {
 tabHistory.addEventListener('click', () => switchTab(true));
 tabSettings.addEventListener('click', () => switchTab(false));
 
+// Modal functions
+function openModal(title, content, data = null) {
+  modalTitle.textContent = title;
+  modalContent.textContent = content;
+  currentModalData = data;
+  modalOverlay.removeAttribute('hidden');
+}
+
+function closeModal() {
+  modalOverlay.setAttribute('hidden', '');
+  currentModalData = null;
+}
+
+modalClose.addEventListener('click', closeModal);
+modalOkBtn.addEventListener('click', closeModal);
+modalOverlay.addEventListener('click', (e) => {
+  if (e.target === modalOverlay) closeModal();
+});
+
+// Modal copy button
+modalCopyBtn.addEventListener('click', async () => {
+  if (!currentModalData) return;
+
+  try {
+    await navigator.clipboard.writeText(modalContent.textContent);
+    showStatus('Copied to clipboard!', false);
+  } catch (error) {
+    showStatus('Failed to copy', true);
+  }
+});
+
+// Modal download button
+modalDownloadBtn.addEventListener('click', () => {
+  if (!currentModalData) return;
+
+  const { type, item } = currentModalData;
+  let filename = 'quizzer-export.txt';
+  let content = modalContent.textContent;
+
+  if (type === 'summary') {
+    filename = `summary-${sanitizeFilename(item.title)}.md`;
+  } else if (type === 'deck') {
+    filename = `flashcards-${sanitizeFilename(item.title)}.json`;
+    content = JSON.stringify(item, null, 2);
+  } else if (type === 'report') {
+    filename = `report-${sanitizeFilename(item.title)}.md`;
+  } else if (type === 'queue-item') {
+    filename = `queue-item-${sanitizeFilename(item.title)}.txt`;
+  }
+
+  downloadFile(content, filename);
+  showStatus('Downloaded!', false);
+});
+
+function sanitizeFilename(name) {
+  return name.replace(/[^a-z0-9]/gi, '-').toLowerCase().substring(0, 50);
+}
+
+function downloadFile(content, filename) {
+  const blob = new Blob([content], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 // Settings management
-const DEFAULT_SETTINGS = {
-  summaryType: 'key-points',
-  summaryLength: 'medium',
-  summaryFormat: 'markdown',
-  outputLanguage: 'en',
-  fcCount: '5',
-  fcDifficulty: 'medium',
-  fcLanguage: 'en',
-  enableCaching: true,
-  cacheExpiration: 24,
-  chunkSize: 4000,
-};
-
-const SETTINGS_KEY = 'quizzer.settings';
-
 async function loadSettings() {
   const data = await chrome.storage.local.get(SETTINGS_KEY);
   return { ...DEFAULT_SETTINGS, ...(data[SETTINGS_KEY] || {}) };
@@ -61,7 +150,6 @@ async function saveSettings(settings) {
 async function initializeSettings() {
   const settings = await loadSettings();
 
-  // Apply settings to form
   document.getElementById('sum-type').value = settings.summaryType;
   document.getElementById('sum-length').value = settings.summaryLength;
   document.getElementById('sum-format').value = settings.summaryFormat;
@@ -69,12 +157,18 @@ async function initializeSettings() {
   document.getElementById('fc-count').value = settings.fcCount;
   document.getElementById('fc-difficulty').value = settings.fcDifficulty;
   document.getElementById('fc-language').value = settings.fcLanguage;
+  document.getElementById('translation-target-lang').value = settings.translationTargetLang;
+  document.getElementById('rewriter-tone').value = settings.rewriterTone;
+  document.getElementById('rewriter-length').value = settings.rewriterLength;
+  document.getElementById('rewriter-format').value = settings.rewriterFormat;
   document.getElementById('enable-caching').checked = settings.enableCaching;
   document.getElementById('cache-expiration').value = settings.cacheExpiration;
   document.getElementById('chunk-size').value = settings.chunkSize;
+  document.getElementById('auto-summarize').checked = settings.autoSummarize || false;
+  document.getElementById('auto-flashcards').checked = settings.autoFlashcards || false;
 }
 
-// Auto-save settings on change
+// Auto-save settings
 function setupSettingsAutoSave() {
   const settingsInputs = viewSettings.querySelectorAll('select, input[type="checkbox"]');
 
@@ -88,9 +182,15 @@ function setupSettingsAutoSave() {
         fcCount: document.getElementById('fc-count').value,
         fcDifficulty: document.getElementById('fc-difficulty').value,
         fcLanguage: document.getElementById('fc-language').value,
+        translationTargetLang: document.getElementById('translation-target-lang').value,
+        rewriterTone: document.getElementById('rewriter-tone').value,
+        rewriterLength: document.getElementById('rewriter-length').value,
+        rewriterFormat: document.getElementById('rewriter-format').value,
         enableCaching: document.getElementById('enable-caching').checked,
         cacheExpiration: parseInt(document.getElementById('cache-expiration').value),
         chunkSize: parseInt(document.getElementById('chunk-size').value),
+        autoSummarize: document.getElementById('auto-summarize').checked,
+        autoFlashcards: document.getElementById('auto-flashcards').checked
       };
 
       await saveSettings(settings);
@@ -111,11 +211,143 @@ function showStatus(message, isError = false) {
   }, 3000);
 }
 
-// History - Summaries
+// Create action buttons for items
+function createActionButtons(item, type) {
+  const actions = document.createElement('div');
+  actions.className = 'item-actions';
+
+  const viewBtn = document.createElement('button');
+  viewBtn.className = 'item-action-btn';
+  viewBtn.textContent = '👁️ View';
+  viewBtn.onclick = (e) => {
+    e.stopPropagation();
+    handleView(item, type);
+  };
+
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'item-action-btn';
+  copyBtn.textContent = '📋 Copy';
+  copyBtn.onclick = async (e) => {
+    e.stopPropagation();
+    await handleCopy(item, type);
+  };
+
+  const downloadBtn = document.createElement('button');
+  downloadBtn.className = 'item-action-btn';
+  downloadBtn.textContent = '⬇️ Download';
+  downloadBtn.onclick = (e) => {
+    e.stopPropagation();
+    handleDownload(item, type);
+  };
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'item-action-btn delete';
+  deleteBtn.textContent = '🗑️ Delete';
+  deleteBtn.onclick = async (e) => {
+    e.stopPropagation();
+    await handleDelete(item, type);
+  };
+
+  actions.append(viewBtn, copyBtn, downloadBtn, deleteBtn);
+  return actions;
+}
+
+// Action handlers
+async function handleView(item, type) {
+  // Get active tab
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) {
+    showStatus('No active tab found', true);
+    return;
+  }
+
+  try {
+    // Send message to content script to show in overlay
+    await chrome.tabs.sendMessage(tab.id, {
+      type: 'QUIZZER_SHOW_CONTENT',
+      item,
+      contentType: type
+    });
+
+    // Close popup
+    window.close();
+  } catch (error) {
+    console.error('Failed to show content:', error);
+    showStatus('Failed to open content. Try refreshing the page.', true);
+  }
+}
+
+async function handleCopy(item, type) {
+  let content = '';
+
+  if (type === 'summary') {
+    content = item.text || '';
+  } else if (type === 'deck') {
+    content = JSON.stringify(item.cards, null, 2);
+  } else if (type === 'report') {
+    content = item.content || '';
+  } else if (type === 'queue-item') {
+    content = item.fullText || item.textExcerpt || '';
+  }
+
+  try {
+    await navigator.clipboard.writeText(content);
+    showStatus('Copied to clipboard!', false);
+  } catch (error) {
+    showStatus('Failed to copy', true);
+  }
+}
+
+function handleDownload(item, type) {
+  let filename = 'quizzer-export.txt';
+  let content = '';
+
+  if (type === 'summary') {
+    filename = `summary-${sanitizeFilename(item.title)}.md`;
+    content = item.text || '';
+  } else if (type === 'deck') {
+    filename = `flashcards-${sanitizeFilename(item.title)}.json`;
+    content = JSON.stringify(item, null, 2);
+  } else if (type === 'report') {
+    filename = `report-${sanitizeFilename(item.title)}.md`;
+    content = item.content || '';
+  } else if (type === 'queue-item') {
+    filename = `queue-item-${sanitizeFilename(item.title)}.txt`;
+    content = item.fullText || item.textExcerpt || '';
+  }
+
+  downloadFile(content, filename);
+  showStatus('Downloaded!', false);
+}
+
+async function handleDelete(item, type) {
+  if (!confirm('Are you sure you want to delete this item?')) return;
+
+  try {
+    if (type === 'summary') {
+      const data = await chrome.storage.local.get('quizzer.summaries');
+      const summaries = data['quizzer.summaries'] || [];
+      const filtered = summaries.filter(s => s.id !== item.id);
+      await chrome.storage.local.set({ 'quizzer.summaries': filtered });
+    } else if (type === 'deck') {
+      await storage.deleteDeck(item.id);
+    } else if (type === 'report') {
+      await storage.deleteReport(item.id);
+    } else if (type === 'queue-item') {
+      await storage.removeFromCollection(item.id);
+    }
+
+    await loadAllHistory();
+    showStatus('Deleted successfully', false);
+  } catch (error) {
+    console.error('Delete error:', error);
+    showStatus('Failed to delete', true);
+  }
+}
+
+// Load summaries
 async function loadSummaries() {
   const summariesList = document.getElementById('summaries-list');
-
-  // Get summaries from storage
   const data = await chrome.storage.local.get('quizzer.summaries');
   const summaries = data['quizzer.summaries'] || [];
 
@@ -124,28 +356,31 @@ async function loadSummaries() {
     return;
   }
 
-  summariesList.innerHTML = summaries.map((summary, index) => `
-    <div class="item" data-index="${index}">
-      <div class="item-title">${escapeHtml(summary.title || 'Untitled')}</div>
-      <div class="item-meta">${new Date(summary.createdAt).toLocaleDateString()}</div>
-      <div class="item-preview">${escapeHtml(summary.text.substring(0, 100))}...</div>
-    </div>
-  `).join('');
+  summariesList.innerHTML = '';
+  summaries.forEach(summary => {
+    const item = document.createElement('div');
+    item.className = 'item';
 
-  // Add click handlers to show full summary
-  summariesList.querySelectorAll('.item').forEach(item => {
-    item.addEventListener('click', () => {
-      const index = parseInt(item.dataset.index);
-      showSummaryDialog(summaries[index]);
-    });
+    const title = document.createElement('div');
+    title.className = 'item-title';
+    title.textContent = escapeHtml(summary.title || 'Untitled');
+
+    const meta = document.createElement('div');
+    meta.className = 'item-meta';
+    meta.textContent = new Date(summary.createdAt).toLocaleDateString();
+
+    const preview = document.createElement('div');
+    preview.className = 'item-preview';
+    preview.textContent = escapeHtml(summary.text.substring(0, 100)) + '...';
+
+    const actions = createActionButtons(summary, 'summary');
+
+    item.append(title, meta, preview, actions);
+    summariesList.appendChild(item);
   });
 }
 
-function showSummaryDialog(summary) {
-  alert(`${summary.title}\n\n${summary.text}`);
-}
-
-// History - Flashcard Decks
+// Load flashcard decks
 async function loadDecks() {
   const decksList = document.getElementById('decks-list');
   const decks = await storage.listDecks();
@@ -155,74 +390,123 @@ async function loadDecks() {
     return;
   }
 
-  decksList.innerHTML = decks.map(deck => `
-    <div class="item" data-deck-id="${deck.id}">
-      <div class="item-title">${escapeHtml(deck.title || 'Untitled Deck')}</div>
-      <div class="item-meta">${deck.cards?.length || 0} cards • ${new Date(deck.createdAt).toLocaleDateString()}</div>
-    </div>
-  `).join('');
+  decksList.innerHTML = '';
+  decks.forEach(deck => {
+    const item = document.createElement('div');
+    item.className = 'item';
 
-  // Add click handlers to review deck
-  decksList.querySelectorAll('.item').forEach(item => {
-    item.addEventListener('click', async () => {
-      const deckId = item.dataset.deckId;
-      const deck = await storage.getDeck(deckId);
-      if (deck) {
-        reviewDeck(deck);
+    const title = document.createElement('div');
+    title.className = 'item-title';
+    title.textContent = escapeHtml(deck.title || 'Untitled Deck');
+
+    const meta = document.createElement('div');
+    meta.className = 'item-meta';
+    meta.textContent = `${deck.cards?.length || 0} cards • ${new Date(deck.createdAt).toLocaleDateString()}`;
+
+    const actions = createActionButtons(deck, 'deck');
+
+    // Add click to review
+    item.style.cursor = 'pointer';
+    item.onclick = async () => {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) return;
+
+      try {
+        await chrome.tabs.sendMessage(tab.id, {
+          type: 'QUIZZER_SHOW_DECK',
+          deck: deck
+        });
+        window.close();
+      } catch (error) {
+        console.error('Failed to show deck:', error);
+        showStatus('Failed to open deck. Try refreshing the page.', true);
       }
-    });
+    };
+
+    item.append(title, meta, actions);
+    decksList.appendChild(item);
   });
 }
 
-async function reviewDeck(deck) {
-  // Send message to content script to show overlay
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) return;
+// Load queue items
+async function loadQueueItems() {
+  const queueList = document.getElementById('queue-list');
+  const queueCount = document.getElementById('queue-count');
+  const generateBtn = document.getElementById('generate-report-btn');
 
-  try {
-    await chrome.tabs.sendMessage(tab.id, {
-      type: 'QUIZZER_SHOW_DECK',
-      deck: deck
-    });
-    window.close(); // Close popup after opening deck
-  } catch (error) {
-    console.error('Failed to show deck:', error);
-    showStatus('Failed to open deck. Try refreshing the page.', true);
+  const collection = await storage.listCollection();
+  const count = collection.length;
+
+  queueCount.textContent = `${count} items in queue`;
+  generateBtn.disabled = count === 0;
+
+  if (count > 0) {
+    queueCount.classList.add('has-items');
+  } else {
+    queueCount.classList.remove('has-items');
   }
+
+  if (collection.length === 0) {
+    queueList.innerHTML = '<p class="empty-state">No items in queue. Right-click → Add to Report Queue</p>';
+    return;
+  }
+
+  queueList.innerHTML = '';
+  collection.forEach(item => {
+    const itemEl = document.createElement('div');
+    itemEl.className = 'item';
+
+    const title = document.createElement('div');
+    title.className = 'item-title';
+    title.textContent = escapeHtml(item.title || 'Untitled');
+
+    const meta = document.createElement('div');
+    meta.className = 'item-meta';
+    meta.textContent = new Date(item.addedAt).toLocaleDateString();
+
+    const preview = document.createElement('div');
+    preview.className = 'item-preview';
+    preview.textContent = escapeHtml(item.textExcerpt || '');
+
+    const actions = createActionButtons(item, 'queue-item');
+
+    itemEl.append(title, meta, preview, actions);
+    queueList.appendChild(itemEl);
+  });
 }
 
-// History - Reports
+// Load reports
 async function loadReports() {
   const reportsList = document.getElementById('reports-list');
   const reports = await storage.listReports();
 
   if (reports.length === 0) {
-    reportsList.innerHTML = '<p class="empty-state">No reports yet. Right-click → Add to Report Queue, then generate.</p>';
+    reportsList.innerHTML = '<p class="empty-state">No reports yet. Generate a report from queue items above.</p>';
     return;
   }
 
-  reportsList.innerHTML = reports.map(report => `
-    <div class="item" data-report-id="${report.id}">
-      <div class="item-title">${escapeHtml(report.title || 'Untitled Report')}</div>
-      <div class="item-meta">${new Date(report.createdAt).toLocaleDateString()}</div>
-      <div class="item-preview">${escapeHtml(report.content.substring(0, 100))}...</div>
-    </div>
-  `).join('');
+  reportsList.innerHTML = '';
+  reports.forEach(report => {
+    const item = document.createElement('div');
+    item.className = 'item';
 
-  // Add click handlers
-  reportsList.querySelectorAll('.item').forEach(item => {
-    item.addEventListener('click', async () => {
-      const reportId = item.dataset.reportId;
-      const report = await storage.getReport(reportId);
-      if (report) {
-        showReportDialog(report);
-      }
-    });
+    const title = document.createElement('div');
+    title.className = 'item-title';
+    title.textContent = escapeHtml(report.title || 'Untitled Report');
+
+    const meta = document.createElement('div');
+    meta.className = 'item-meta';
+    meta.textContent = new Date(report.createdAt).toLocaleDateString();
+
+    const preview = document.createElement('div');
+    preview.className = 'item-preview';
+    preview.textContent = escapeHtml(report.content.substring(0, 100)) + '...';
+
+    const actions = createActionButtons(report, 'report');
+
+    item.append(title, meta, preview, actions);
+    reportsList.appendChild(item);
   });
-}
-
-function showReportDialog(report) {
-  alert(`${report.title}\n\n${report.content}`);
 }
 
 // Queue management
@@ -230,10 +514,11 @@ document.getElementById('clear-queue-btn').addEventListener('click', async () =>
   if (!confirm('Clear all items from the report queue?')) return;
 
   await storage.clearCollection();
-  await updateQueueInfo();
+  await loadQueueItems();
   showStatus('Queue cleared', false);
 });
 
+// Generate report
 document.getElementById('generate-report-btn').addEventListener('click', async () => {
   const collection = await storage.listCollection();
   if (collection.length === 0) {
@@ -241,7 +526,50 @@ document.getElementById('generate-report-btn').addEventListener('click', async (
     return;
   }
 
-  showStatus('Report generation coming soon...', false);
+  const generateBtn = document.getElementById('generate-report-btn');
+  generateBtn.disabled = true;
+  generateBtn.textContent = 'Generating...';
+
+  try {
+    const settings = await loadSettings();
+    const customInstructions = document.getElementById('report-instructions').value.trim();
+
+    const result = await processReportGeneration({
+      items: collection,
+      outputLanguage: settings.outputLanguage,
+      customInstructions: customInstructions || undefined,
+      onProgress: (message, percent) => {
+        generateBtn.textContent = `Generating... ${Math.round(percent)}%`;
+      }
+    });
+
+    // Save report
+    const report = {
+      title: `Report - ${new Date().toLocaleDateString()}`,
+      content: result.report,
+      sourceIds: collection.map(item => item.id),
+      citations: result.citations
+    };
+
+    await storage.saveReport(report);
+
+    // Optionally clear queue
+    if (confirm('Report generated! Clear the queue?')) {
+      await storage.clearCollection();
+    }
+
+    await loadAllHistory();
+    showStatus('Report generated successfully!', false);
+
+    // Open modal to view
+    openModal(report.title, report.content, { type: 'report', item: report });
+  } catch (error) {
+    console.error('Report generation error:', error);
+    showStatus('Error: ' + error.message, true);
+  } finally {
+    generateBtn.disabled = false;
+    generateBtn.textContent = 'Generate Report from Queue';
+  }
 });
 
 // Data management
@@ -251,21 +579,11 @@ document.getElementById('export-data').addEventListener('click', async () => {
     const exportObject = {
       version: '1.0',
       exportDate: new Date().toISOString(),
-      data: allData,
+      data: allData
     };
 
     const dataStr = JSON.stringify(exportObject, null, 2);
-    const blob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `quizzer-export-${Date.now()}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
+    downloadFile(dataStr, `quizzer-export-${Date.now()}.json`);
     showStatus('Data exported successfully', false);
   } catch (error) {
     console.error('Export error:', error);
@@ -340,58 +658,115 @@ async function loadAllHistory() {
   await Promise.all([
     loadSummaries(),
     loadDecks(),
-    loadReports(),
-    updateQueueInfo(),
+    loadQueueItems(),
+    loadReports()
   ]);
 }
 
-// Check Translation API availability
-async function checkTranslationAPI() {
+// Check AI APIs availability
+async function checkAIAPIs() {
   const apiWarning = document.getElementById('api-warning');
-  const enableLink = document.getElementById('enable-translation-link');
+  const warningContent = document.getElementById('api-warning-content');
+  const missingAPIs = [];
 
-  // Check if Translation API is available
-  if (!('translation' in self) && !('Translator' in self)) {
+  // Check Summarizer API
+  try {
+    if (!('Summarizer' in self)) {
+      console.log('[Quizzer Popup] Summarizer not in self');
+      missingAPIs.push({
+        name: 'Summarizer API',
+        feature: 'Summarization',
+        flag: 'optimization-guide-on-device-model'
+      });
+    } else {
+      const availability = await Summarizer.availability();
+      console.log('[Quizzer Popup] Summarizer availability:', availability);
+      // Availability states: 'readily', 'after-download', 'no' (NOT 'available', 'downloadable', etc)
+      if (availability === 'no') {
+        missingAPIs.push({
+          name: 'Summarizer API',
+          feature: 'Summarization',
+          flag: 'optimization-guide-on-device-model',
+          reason: 'unavailable on this device'
+        });
+      }
+    }
+  } catch (e) {
+    console.error('[Quizzer Popup] Summarizer API check error:', e);
+    // Don't add to missing list if check itself fails - might be a temporary error
+  }
+
+  // Check Prompt API (LanguageModel)
+  try {
+    if (!('ai' in self) || !self.ai?.languageModel) {
+      console.log('[Quizzer Popup] Prompt API not available in self.ai');
+      missingAPIs.push({
+        name: 'Prompt API',
+        feature: 'Flashcards & Reports',
+        flag: 'optimization-guide-on-device-model'
+      });
+    } else {
+      const capabilities = await self.ai.languageModel.capabilities();
+      console.log('[Quizzer Popup] Prompt API capabilities:', capabilities);
+      // capabilities.available states: 'readily', 'after-download', 'no'
+      if (capabilities.available === 'no') {
+        missingAPIs.push({
+          name: 'Prompt API',
+          feature: 'Flashcards & Reports',
+          flag: 'optimization-guide-on-device-model',
+          reason: 'unavailable on this device'
+        });
+      }
+    }
+  } catch (e) {
+    console.error('[Quizzer Popup] Prompt API check error:', e);
+    // Don't add to missing list if check itself fails - might be a temporary error
+  }
+
+  // Display warnings if any APIs are missing
+  if (missingAPIs.length > 0) {
+    const warningHTML = `
+      <div style="line-height: 1.5;">
+        <div style="margin-bottom: 4px;">⚠️ <strong>AI APIs Not Available</strong></div>
+        <div style="font-size: 10px; margin-bottom: 6px;">
+          ${missingAPIs.map(api =>
+            `• <strong>${api.name}</strong> (${api.feature})${api.reason ? ` - ${api.reason}` : ''}`
+          ).join('<br>')}
+        </div>
+        <div style="font-size: 10px;">
+          Enable <strong>"Optimization Guide On Device Model"</strong> at
+          <a href="#" id="enable-ai-link" style="color: inherit; font-weight: 600;">chrome://flags</a>,
+          then restart Chrome.
+        </div>
+      </div>
+    `;
+
+    warningContent.innerHTML = warningHTML;
     apiWarning.removeAttribute('hidden');
 
-    // Handle click on enable link
-    enableLink.addEventListener('click', (e) => {
-      e.preventDefault();
-      // Open chrome://flags in a new tab
-      chrome.tabs.create({
-        url: 'chrome://flags/#translation-api'
+    // Add click handler to open flags page
+    const enableLink = document.getElementById('enable-ai-link');
+    if (enableLink) {
+      enableLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        chrome.tabs.create({
+          url: 'chrome://flags/#optimization-guide-on-device-model'
+        });
       });
-    });
-  }
-}
-
-// Update queue count color
-async function updateQueueInfo() {
-  const queueCount = document.getElementById('queue-count');
-  const generateBtn = document.getElementById('generate-report-btn');
-
-  const collection = await storage.listCollection();
-  const count = collection.length;
-
-  queueCount.textContent = `${count} items in queue`;
-  generateBtn.disabled = count === 0;
-
-  // Add green color when there are items
-  if (count > 0) {
-    queueCount.classList.add('has-items');
+    }
   } else {
-    queueCount.classList.remove('has-items');
+    apiWarning.setAttribute('hidden', '');
   }
 }
 
 // Initialize
 async function init() {
-  await checkTranslationAPI();
+  await checkAIAPIs();
   await initializeSettings();
   setupSettingsAutoSave();
   await loadAllHistory();
 
-  // Refresh history when popup is opened
+  // Refresh history when storage changes
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName === 'local') {
       loadAllHistory();

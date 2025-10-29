@@ -1,158 +1,722 @@
-# Chrome Built-in AI APIs in MV3 Extensions – Research & Integration Guide
+# Chrome Built-in AI APIs - Comprehensive Reference
 
-Last updated: 2025-10-18
+Last updated: 2025-01-29
 
-This document summarizes how to enable and integrate the Chrome built‑in AI APIs in a Manifest V3 extension, with links to official docs and practical extension-specific notes.
+This document provides detailed technical specifications for Chrome's built-in AI APIs, including correct API patterns, parameters, and integration guidelines for Manifest V3 extensions.
 
+## Table of Contents
+1. [Overview & Requirements](#overview--requirements)
+2. [Prompt API (LanguageModel)](#prompt-api-languagemodel)
+3. [Summarizer API](#summarizer-api)
+4. [Writer API](#writer-api-origin-trial)
+5. [Rewriter API](#rewriter-api-origin-trial)
+6. [Translator API](#translator-api)
+7. [Language Detector API](#language-detector-api)
+8. [Proofreader API](#proofreader-api-origin-trial)
+9. [Common Patterns & Best Practices](#common-patterns--best-practices)
 
-APIs covered
-- Prompt API (LanguageModel)
-- Summarizer API (Summarizer)
-- Writer API (Writer) – origin trial
-- Rewriter API (Rewriter) – origin trial
-- Proofreader API (Proofreader) – origin trial
-- Translator API (Translator) – also used for switching output language of results
-- Language Detector API (LanguageDetector)
+---
 
-## 1) Eligibility, hardware, and availability
-- Browser: Chrome 138+ (Windows 10/11, macOS 13+, Linux, or Chromebook Plus per docs)
-- Storage: ~22 GB free on Chrome profile volume for model downloads (varies)
-- Hardware: GPU >4 GB VRAM or CPU with 16 GB RAM and 4+ cores
-- Availability states: `available`, `downloadable`, `downloading`, `unavailable`
-- Models download once per origin/extension; check `chrome://on-device-internals` for status
-- Built-in AI does NOT run in service workers; use document contexts (popup, options, content script, offscreen doc)
+## Overview & Requirements
 
-References
-- Built-in AI APIs: developer.chrome.com/docs/ai/built-in-apis
-- Get started + requirements: developer.chrome.com/docs/ai/get-started
-- On-device internals: chrome://on-device-internals
+### Browser & Hardware Requirements
 
-## 2) Permissions policy and where to run
-- Allowed: top-level windows, same-origin iframes (extension pages, content scripts)
-- Delegation to cross-origin iframes via allow attribute (not common for extensions)
-- Not supported in Web Workers (including extension service workers)
-- Strategy: route events in background SW, execute AI in popup/options/content/offscreen
+**Chrome Version:** 138+ (some APIs require 141+)
 
-References
-- Summarizer: Permission Policy section
-- Prompt: Permission Policy section
+**Operating Systems:**
+- Windows 10/11
+- macOS 13+ (Ventura onwards)
+- Linux
+- ChromeOS (Chromebook Plus, Platform 16389.0.0+)
+- ❌ NOT SUPPORTED: Android, iOS, non-Chromebook Plus devices
 
-## 3) User activation & model download
-- The first `create()` requires a user gesture (click/tap/key). Plan UX to start from user interaction.
-- Use `availability()` to detect state; if `downloadable/downloading`, show `monitor(downloadprogress)` hook and communicate progress.
-- For context menu flows: forward to content script and display a small inline consent button to satisfy user activation before creating the model.
+**Storage:** Minimum 22 GB free space on Chrome profile volume
 
-References
-- Summarizer, Prompt, Writer, Rewriter pages: user activation and monitor examples
+**Processing Power (either):**
+- GPU: Strictly >4 GB VRAM
+- CPU: 16+ GB RAM with 4+ cores
 
+**Network:** Unmetered connection required (Wi-Fi/Ethernet preferred)
 
-## 4) Output language and AI pipeline
-- All AI API calls (Summarizer, Prompt, etc.) must specify an output language code (outputLanguage: [en, es, ja, ...]); default is en, but user can select from top 5 and switch using Translator API.
-- For large/complex pages, implement an AI pipeline: extract and clean up main content (remove nav, ads, scripts, etc.), chunk content as needed, process in phases, and merge results.
+### Execution Context
 
-## 5) API-by-API integration
+**✅ Supported:**
+- Top-level windows (extension pages, webpages)
+- Same-origin iframes
+- Extension popup, options, content scripts, offscreen documents
 
+**❌ NOT Supported:**
+- Service Workers (including extension background)
+- Web Workers
+- Cross-origin iframes (without Permissions Policy delegation)
 
-### Prompt API
-- Status: Stable for extensions in Chrome 138+
-- Namespace: `LanguageModel`
-- Steps: `await LanguageModel.availability()` -> `await LanguageModel.create({ ... })` -> `session.prompt()` or `promptStreaming()`
-- Features: sessions, temperature/topK, initial prompts, structured output via `responseConstraint` (JSON Schema), streaming, outputLanguage
-- Use cases in this project: MCQ generation with JSON Schema; report synthesis; always specify outputLanguage (default en, user-selectable)
-- Extension notes: run in popup or content script; manage session lifecycle; avoid SW
+**Strategy for Extensions:**
+- Route events in background service worker
+- Execute AI in popup/options/content script/offscreen document
+- Use messaging to coordinate between contexts
 
-Docs: developer.chrome.com/docs/ai/prompt-api
+### User Activation & Downloads
 
+- **First call to `create()`** requires user gesture (click, tap, key press)
+- Models download on first use (one-time per origin/extension)
+- Use `monitor` callback with `downloadprogress` event for tracking
+- Check `chrome://on-device-internals` for model status
 
-### Summarizer API
-- Status: Stable in Chrome 138+
-- Namespace: `Summarizer`
-- Steps: `await Summarizer.availability()` -> `await Summarizer.create({ type, length, format, outputLanguage, sharedContext, monitor })` -> `summarize()` or `summarizeStreaming()`
-- Immutable options per summarizer instance; create a new instance for different parameters
-- Use cases: tldr, key-points, headline/teaser with short/medium/long
-- Extension notes: prefer `innerText` over `innerHTML`; chunk long pages; stream output; always specify outputLanguage (default en, user-selectable)
+---
 
-Docs: developer.chrome.com/docs/ai/summarizer-api
+## Prompt API (LanguageModel)
 
-### Writer API (origin trial)
-- Status: Origin trial (Chrome ~137–142). Requires token.
-- Namespace: `Writer`
-- Steps: Register origin trial with your extension ID, add token to manifest, feature-detect `'Writer' in self`, then use `Writer.availability()`, `Writer.create()`, `writer.write()`/`writeStreaming()`
-- Use cases: compose prose in user’s tone/style; optional polishing for reports
+**Status:** Stable in Chrome 138+
+**Namespace:** `self.ai.languageModel` (NOT `LanguageModel` or `window.ai`)
+**Model:** Gemini Nano
 
-Docs: developer.chrome.com/docs/ai/writer-api
+### Availability States
 
-### Rewriter API (origin trial)
-- Status: Origin trial (Chrome ~137–142). Requires token.
-- Namespace: `Rewriter`
-- Steps: Same pattern as Writer
-- Use cases: make text more formal/casual, shorter/longer; optional pass on outputs
+```javascript
+// Correct pattern
+const capabilities = await self.ai.languageModel.capabilities();
+// capabilities.available returns: 'readily', 'after-download', or 'no'
+```
 
-Docs: developer.chrome.com/docs/ai/rewriter-api
+**States:**
+- `readily`: Model ready for immediate use
+- `after-download`: Model will download on first use
+- `no`: Model unavailable on this device
 
-### Proofreader API (origin trial)
-- Status: Origin trial
-- Namespace: `Proofreader`
-- Use cases: correctness, grammar suggestions on user text
-- Extension notes: gate behind feature toggle; rely on Prompt/Writer as fallback
+### Create Session
 
-Docs: developer.chrome.com/docs/ai/proofreader-api
+```javascript
+const session = await self.ai.languageModel.create({
+  temperature: 0.7,              // 0-2, controls randomness (default: max 2)
+  topK: 40,                      // 1-128, token selection diversity (default: 3)
+  systemPrompt: 'You are...',    // Optional system prompt
+  initialPrompts: [              // Optional conversation history
+    {role: 'system', content: 'Context'},
+    {role: 'user', content: 'Question'},
+    {role: 'assistant', content: 'Answer'}
+  ],
+  signal: abortSignal            // Optional AbortSignal
+});
+```
 
+### Prompting Methods
 
-### Translator API
-- Status: Stable in Chrome 138+
-- Namespace: `Translator`
-- Use cases: translate summaries/reports/flashcards to user-selected language; allow user to quickly switch output language for any result
-- Extension notes: always offer top 5 language choices (en, es, ja, fr, de or similar); integrate quick switch in popup/overlay
+**Batch (non-streaming):**
+```javascript
+const result = await session.prompt('Your question');
+```
 
-Docs: developer.chrome.com/docs/ai/translator-api
+**Streaming:**
+```javascript
+const stream = session.promptStreaming('Your question');
+for await (const chunk of stream) {
+  console.log(chunk); // Progressive output
+}
+```
 
-### Language Detector API
-- Status: Stable in Chrome 138+
-- Namespace: `LanguageDetector`
-- Use cases: auto-detect source language and set Translator target/source
+### Structured Output (JSON Schema)
 
-Docs: developer.chrome.com/docs/ai/language-detection
+```javascript
+const schema = {
+  type: "object",
+  properties: {
+    answer: { type: "boolean" },
+    confidence: { type: "number" }
+  },
+  required: ["answer"]
+};
 
-## 5) Origin trials for extensions (Writer/Rewriter/Proofreader)
-- Register trial with your extension ID (chrome-extension://<EXTENSION_ID>)
-- Add the token to the manifest per docs (Origin Trials in extensions)
-- Feature-detect at runtime and degrade gracefully if missing
-- Localhost dev: enable the respective chrome://flags entries (Writer/Rewriter) when testing
+const result = await session.prompt(
+  'Is this about pottery?',
+  { responseConstraint: schema }
+);
+```
 
-Docs: developer.chrome.com/docs/web-platform/origin-trials#extensions
+### Session Management
 
-## 6) Common pitfalls and patterns
-- Don’t call APIs from the service worker
-- Always guard with availability() and user activation
-- Streaming UX: display partials promptly; allow cancel via AbortController
-- Structured output: use JSON Schema with Prompt API; validate and reprompt on errors
-- Chunk long inputs and summarize summaries
-- Cache per URL+hash to avoid re-inferencing unchanged pages
+```javascript
+// Check token usage
+console.log(session.inputUsage, session.inputQuota);
 
-## 7) Minimal example placements in an extension (no code, just placement)
-- Popup: create sessions/summarizers and render streaming results
-- Content script: get selection/page text, inject overlay, optionally run AI after user confirmation
-- Options: settings and optional test prompts; not required for core
-- Background SW: create context menus, route messages to documents only
-- Offscreen (optional): use for long tasks if popup must be closed, still needs prior user activation
+// Clone session (preserves resources, resets context)
+const newSession = await session.clone();
 
-## 8) Testing & debugging tips
-- Use DevTools Console in popup/content pages; inspect streaming chunks
-- `chrome://on-device-internals` to monitor model download and status
-- Feature-detection branches for graceful fallbacks
-- Provide an in-app diagnostics panel to surface availability and quotas
+// Destroy session
+session.destroy();
+```
 
-## 9) References
-- AI overview: developer.chrome.com/docs/ai
-- Built-in APIs status: developer.chrome.com/docs/ai/built-in-apis
-- Prompt API: developer.chrome.com/docs/ai/prompt-api
-- Summarizer API: developer.chrome.com/docs/ai/summarizer-api
-- Writer API: developer.chrome.com/docs/ai/writer-api
-- Rewriter API: developer.chrome.com/docs/ai/rewriter-api
-- Proofreader API: developer.chrome.com/docs/ai/proofreader-api
-- Translator API: developer.chrome.com/docs/ai/translator-api
-- Language Detector API: developer.chrome.com/docs/ai/language-detection
-- Extensions & AI: developer.chrome.com/docs/extensions/ai
-- MV3 Develop: developer.chrome.com/docs/extensions/develop
-- Samples: developer.chrome.com/docs/extensions/samples
+### Supported Languages
+
+**Input & Output:** English (en), Japanese (ja), Spanish (es)
+
+**Extension Usage:**
+- Always specify `systemPrompt` for task context
+- Use structured output for consistent data formats
+- Manage token limits by checking `inputUsage`
+- Destroy sessions when done to free memory
+
+---
+
+## Summarizer API
+
+**Status:** Stable in Chrome 138+
+**Namespace:** `Summarizer` (global object)
+
+### Availability States
+
+```javascript
+if (!('Summarizer' in self)) {
+  throw new Error('Summarizer not supported');
+}
+
+const availability = await Summarizer.availability();
+// Returns: 'readily', 'after-download', or 'no'
+```
+
+### Create Summarizer
+
+```javascript
+const summarizer = await Summarizer.create({
+  type: 'key-points',           // 'key-points' (default), 'tldr', 'teaser', 'headline'
+  length: 'medium',             // 'short', 'medium' (default), 'long'
+  format: 'markdown',           // 'markdown' (default), 'plain-text'
+  outputLanguage: 'en',         // REQUIRED: 'en', 'es', 'ja', etc.
+  sharedContext: 'Optional context for better summaries',
+  expectedInputLanguages: ['en', 'es'],  // Optional
+  expectedContextLanguages: ['en'],      // Optional
+  monitor(m) {
+    m.addEventListener('downloadprogress', (e) => {
+      console.log(`Downloaded ${e.loaded * 100}%`);
+    });
+  }
+});
+```
+
+### Summarization Methods
+
+**Batch:**
+```javascript
+const summary = await summarizer.summarize(longText, {
+  context: 'Additional context for this specific summarization'
+});
+```
+
+**Streaming:**
+```javascript
+const stream = summarizer.summarizeStreaming(longText, {
+  context: 'Optional context'
+});
+for await (const chunk of stream) {
+  console.log(chunk);
+}
+```
+
+**Important:** `outputLanguage` is set ONLY in `create()`, not in `summarize()` or `summarizeStreaming()`.
+
+### Extension Usage
+
+- Always specify `outputLanguage` to avoid warnings
+- Use `sharedContext` for domain-specific summaries
+- Prefer `innerText` over `innerHTML` for cleaner input
+- Chunk long documents (>8000 chars) and summarize hierarchically
+- One summarizer instance per configuration (immutable options)
+
+---
+
+## Writer API (Origin Trial)
+
+**Status:** Origin Trial (Chrome 137-148)
+**Namespace:** `Writer` (global object)
+**Registration Required:** Must acknowledge Google's Generative AI Prohibited Uses Policy
+
+### Availability
+
+```javascript
+if (!('Writer' in self)) {
+  throw new Error('Writer API not available');
+}
+
+const availability = await Writer.availability();
+// Returns: 'available', 'downloadable', or 'unavailable'
+```
+
+### Create Writer
+
+```javascript
+const writer = await Writer.create({
+  tone: 'neutral',              // 'formal', 'neutral' (default), 'casual'
+  format: 'markdown',           // 'markdown' (default), 'plain-text'
+  length: 'medium',             // 'short' (default), 'medium', 'long'
+  outputLanguage: 'en',         // Output language code
+  sharedContext: 'Context for all writes',
+  expectedInputLanguages: ['en'],
+  expectedContextLanguages: ['en'],
+  signal: abortSignal
+});
+```
+
+### Writing Methods
+
+**Batch:**
+```javascript
+const result = await writer.write(prompt, {
+  context: 'Optional context for this write'
+});
+```
+
+**Streaming:**
+```javascript
+const stream = writer.writeStreaming(prompt, {
+  context: 'Optional context'
+});
+for await (const chunk of stream) {
+  console.log(chunk);
+}
+```
+
+### Extension Usage
+
+- Reuse writer instances for multiple pieces
+- Use `sharedContext` for consistent style/tone
+- Call `writer.destroy()` when done
+- Requires origin trial token in manifest
+
+---
+
+## Rewriter API (Origin Trial)
+
+**Status:** Origin Trial (Chrome 137-148)
+**Namespace:** `Rewriter` (global object)
+**Registration Required:** Joint trial with Writer API
+
+### Availability
+
+```javascript
+if (!('Rewriter' in self)) {
+  throw new Error('Rewriter API not available');
+}
+
+const availability = await Rewriter.availability();
+// Returns: 'available', 'downloadable', or 'unavailable'
+```
+
+### Create Rewriter
+
+```javascript
+const rewriter = await Rewriter.create({
+  tone: 'as-is',                // 'more-formal', 'as-is' (default), 'more-casual'
+  format: 'as-is',              // 'as-is' (default), 'markdown', 'plain-text'
+  length: 'as-is',              // 'shorter', 'as-is' (default), 'longer'
+  outputLanguage: 'en',         // Output language code
+  sharedContext: 'Context for rewrites',
+  expectedInputLanguages: ['en'],
+  expectedContextLanguages: ['en']
+});
+```
+
+### Rewriting Methods
+
+**Batch:**
+```javascript
+const result = await rewriter.rewrite(text, {
+  context: 'Optional context for this rewrite'
+});
+```
+
+**Streaming:**
+```javascript
+const stream = rewriter.rewriteStreaming(text, {
+  context: 'Optional context'
+});
+for await (const chunk of stream) {
+  console.log(chunk);
+}
+```
+
+### Extension Usage
+
+- Use for tone adjustment (formal ↔ casual)
+- Use for length modification (shorter ↔ longer)
+- One rewriter can process multiple texts
+- Call `rewriter.destroy()` when done
+- Requires origin trial token in manifest
+
+---
+
+## Translator API
+
+**Status:** Stable in Chrome 138+
+**Namespace:** `self.translation` (NOT `Translator`)
+
+### Availability Check
+
+```javascript
+if (!('translation' in self)) {
+  throw new Error('Translation API not available');
+}
+
+const canTranslate = await translation.canTranslate({
+  sourceLanguage: 'en',
+  targetLanguage: 'es'
+});
+// Returns: 'readily', 'after-download', or 'no'
+```
+
+### Create Translator
+
+```javascript
+const translator = await translation.createTranslator({
+  sourceLanguage: 'en',         // BCP 47 language code
+  targetLanguage: 'es',         // BCP 47 language code
+  monitor(m) {
+    m.addEventListener('downloadprogress', (e) => {
+      console.log(`Downloaded ${e.loaded * 100}%`);
+    });
+  }
+});
+```
+
+### Translation Methods
+
+**Batch:**
+```javascript
+const translated = await translator.translate('Hello world');
+```
+
+**Streaming:**
+```javascript
+const stream = translator.translateStreaming(longText);
+for await (const chunk of stream) {
+  console.log(chunk);
+}
+```
+
+### Language Codes
+
+Use BCP 47 short codes: `'en'`, `'es'`, `'fr'`, `'de'`, `'ja'`, `'zh'`, `'ko'`, `'it'`, `'pt'`, `'ru'`, etc.
+
+### Extension Usage
+
+- Always check `canTranslate()` before creating translator
+- User activation required before first `createTranslator()`
+- Models download per language pair
+- Reuse translator instances for same language pair
+
+---
+
+## Language Detector API
+
+**Status:** Stable in Chrome 138+
+**Namespace:** `LanguageDetector` (global object)
+
+### Availability
+
+```javascript
+if (!('LanguageDetector' in self)) {
+  throw new Error('Language Detector not available');
+}
+
+const availability = await LanguageDetector.availability();
+// Returns: 'downloadable' if needs download
+```
+
+### Create Detector
+
+```javascript
+const detector = await LanguageDetector.create({
+  monitor(m) {
+    m.addEventListener('downloadprogress', (e) => {
+      console.log(`Downloaded ${e.loaded * 100}%`);
+    });
+  }
+});
+```
+
+### Detection
+
+```javascript
+const results = await detector.detect('Bonjour le monde!');
+
+// Returns array sorted by confidence:
+// [
+//   { detectedLanguage: 'fr', confidence: 0.95 },
+//   { detectedLanguage: 'en', confidence: 0.05 }
+// ]
+
+// Get most likely language
+const primaryLang = results[0].detectedLanguage;
+```
+
+### Extension Usage
+
+- Use for auto-detecting source language before translation
+- Less accurate for very short text
+- Model is small and downloads quickly
+- Results ranked from most to least probable
+
+---
+
+## Proofreader API (Origin Trial)
+
+**Status:** Origin Trial (Chrome 141-145)
+**Namespace:** `Proofreader` (global object)
+**Registration Required:** Must acknowledge Google's Generative AI Prohibited Uses Policy
+
+### Availability
+
+```javascript
+if (!('Proofreader' in self)) {
+  throw new Error('Proofreader API not available');
+}
+
+const availability = await Proofreader.availability();
+// Returns: 'downloadable' or availability status
+```
+
+### Create Proofreader
+
+```javascript
+const proofreader = await Proofreader.create({
+  expectedInputLanguages: ['en'],
+  monitor(m) {
+    m.addEventListener('downloadprogress', (e) => {
+      console.log(`Downloaded ${e.loaded * 100}%`);
+    });
+  }
+});
+```
+
+### Proofreading
+
+```javascript
+const result = await proofreader.proofread(
+  'I seen him yesterday at the store, and he bought two loafs of bread.'
+);
+
+// Response format:
+// {
+//   corrected: 'I saw him yesterday at the store, and he bought two loaves of bread.',
+//   corrections: [
+//     {
+//       startIndex: 2,
+//       endIndex: 6,
+//       type: 'grammar',
+//       explanation: 'Past tense of "see" is "saw"'
+//     },
+//     {
+//       startIndex: 59,
+//       endIndex: 64,
+//       type: 'spelling',
+//       explanation: 'Plural of "loaf" is "loaves"'
+//     }
+//   ]
+// }
+```
+
+### Extension Usage
+
+- Returns full corrected text + detailed corrections array
+- Each correction includes: `startIndex`, `endIndex`, `type`, `explanation`
+- Supports English (`en`) input language
+- Requires origin trial token in manifest
+- Call `proofreader.destroy()` when done
+
+---
+
+## Common Patterns & Best Practices
+
+### 1. Availability Checking Pattern
+
+```javascript
+// For APIs with self.ai pattern
+if (!('ai' in self) || !self.ai?.languageModel) {
+  throw new Error('API not available');
+}
+
+const capabilities = await self.ai.languageModel.capabilities();
+if (capabilities.available === 'no') {
+  throw new Error('Model unavailable');
+}
+
+// For global APIs
+if (!('Summarizer' in self)) {
+  throw new Error('API not available');
+}
+
+const availability = await Summarizer.availability();
+if (availability === 'no' || availability === 'unavailable') {
+  throw new Error('Model unavailable');
+}
+```
+
+### 2. User Activation Strategy
+
+For context menu flows:
+1. Forward event to content script
+2. Show inline "Start" button in overlay
+3. User clicks button (satisfies activation requirement)
+4. Call `create()` method
+
+### 3. Streaming Pattern
+
+```javascript
+const stream = api.methodStreaming(input);
+let accumulated = '';
+
+try {
+  for await (const chunk of stream) {
+    accumulated = chunk; // Most APIs accumulate in chunk
+    updateUI(chunk);
+  }
+} catch (error) {
+  if (error.name === 'AbortError') {
+    console.log('Operation cancelled');
+  }
+}
+```
+
+### 4. Cancellation Pattern
+
+```javascript
+const controller = new AbortController();
+
+const session = await api.create({
+  signal: controller.signal
+});
+
+// Later, to cancel:
+controller.abort();
+```
+
+### 5. Download Progress
+
+```javascript
+await API.create({
+  monitor(m) {
+    m.addEventListener('downloadprogress', (e) => {
+      const percent = Math.round(e.loaded * 100);
+      console.log(`Downloaded ${percent}%`);
+      updateProgressBar(percent);
+    });
+  }
+});
+```
+
+### 6. Error Handling
+
+```javascript
+try {
+  const result = await api.method(input);
+} catch (error) {
+  if (error.message.includes('not available')) {
+    // Guide user to enable in chrome://flags
+  } else if (error.message.includes('quota')) {
+    // Handle quota exceeded
+  } else {
+    // Generic error handling
+  }
+}
+```
+
+### 7. Caching Strategy
+
+```javascript
+// Cache based on content hash
+const cacheKey = `${url}:${hashContent(text)}:${action}`;
+const cached = await getCachedResult(cacheKey);
+
+if (cached && !isExpired(cached)) {
+  return cached.result;
+}
+
+const result = await processWithAI(text);
+await setCachedResult(cacheKey, result);
+return result;
+```
+
+### 8. Chunking Long Content
+
+```javascript
+const MAX_CHUNK_SIZE = 4000; // tokens/chars
+
+if (content.length > MAX_CHUNK_SIZE) {
+  const chunks = splitIntoChunks(content, MAX_CHUNK_SIZE);
+
+  // Process chunks
+  const results = [];
+  for (const chunk of chunks) {
+    const result = await processChunk(chunk);
+    results.push(result);
+  }
+
+  // Combine results
+  return combineResults(results);
+}
+```
+
+### 9. Extension-Specific Patterns
+
+**manifest.json:**
+```json
+{
+  "permissions": ["storage"],
+  "content_scripts": [{"matches": ["<all_urls>"]}],
+  "web_accessible_resources": [{
+    "resources": ["scripts/*.js"],
+    "matches": ["<all_urls>"]
+  }]
+}
+```
+
+**Message passing:**
+```javascript
+// Background → Content
+chrome.tabs.sendMessage(tabId, {type: 'ACTION', data});
+
+// Content → Background
+chrome.runtime.sendMessage({type: 'ACTION', data});
+```
+
+---
+
+## Debugging Tools
+
+1. **chrome://on-device-internals** - Model download status
+2. **chrome://flags** - Enable/disable AI features
+3. **DevTools Console** - Check API availability and errors
+4. **Feature Detection** - Always check before use
+
+---
+
+## Important Reminders
+
+- ✅ Use `self.ai.languageModel` (NOT `window.ai` or `LanguageModel`)
+- ✅ Use `self.translation` (NOT `Translator`)
+- ✅ Check availability states: `'readily'`, `'after-download'`, `'no'`
+- ✅ Always specify `outputLanguage` for Summarizer
+- ✅ Require user activation for first `create()` call
+- ✅ APIs work in document contexts only (not workers)
+- ✅ Destroy/cleanup API instances when done
+- ❌ Don't call APIs from service workers
+- ❌ Don't assume models are immediately available
+- ❌ Don't skip availability checks
+
+---
+
+## References
+
+- AI Overview: https://developer.chrome.com/docs/ai
+- Built-in APIs Status: https://developer.chrome.com/docs/ai/built-in-apis
+- Prompt API: https://developer.chrome.com/docs/ai/prompt-api
+- Summarizer API: https://developer.chrome.com/docs/ai/summarizer-api
+- Writer API: https://developer.chrome.com/docs/ai/writer-api
+- Rewriter API: https://developer.chrome.com/docs/ai/rewriter-api
+- Translator API: https://developer.chrome.com/docs/ai/translator-api
+- Language Detector API: https://developer.chrome.com/docs/ai/language-detection
+- Proofreader API: https://developer.chrome.com/docs/ai/proofreader-api
+- Extensions & AI: https://developer.chrome.com/docs/extensions/ai
+- MV3 Development: https://developer.chrome.com/docs/extensions/develop
+
+---
+
+*Last verified: January 2025 - Chrome 138+*

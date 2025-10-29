@@ -19,15 +19,21 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content/content.js"],
+      "js": ["content/content-loader.js"],
       "run_at": "document_idle"
     }
-  ]
-  ,
+  ],
   "web_accessible_resources": [
     {
       "resources": [
-        "content/overlay.css"
+        "content/overlay.css",
+        "content/content.js",
+        "content/task-manager.js",
+        "content/unified-overlay.js",
+        "utils/content-extractor.js",
+        "utils/ai-pipeline.js",
+        "utils/timing-estimator.js",
+        "data/storage.js"
       ],
       "matches": ["<all_urls>"]
     }

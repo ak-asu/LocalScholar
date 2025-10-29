@@ -1,509 +1,695 @@
-// Content script: text extraction and shadow-DOM overlay
+/**
+ * Quizzer Content Script
+ *
+ * Handles:
+ * - Context menu actions (summarize, flashcards, add to queue)
+ * - Task management with progress overlays
+ * - Flashcard deck display
+ * - Content extraction using utilities
+ */
 
-// Content extraction configuration (inlined to avoid ES module issues)
-const CONFIG = {
-  MAX_CHUNK_SIZE: 10000,
-  MIN_CHUNK_SIZE: 500,
-  CHUNK_OVERLAP: 200,
-  NOISE_SELECTORS: [
-    'script', 'style', 'noscript', 'iframe', 'embed',
-    'nav', 'header', 'footer', 'aside',
-    '.advertisement', '.ad', '.ads', '.social-share',
-    '.comments', '.cookie-banner', '.modal', '.popup',
-    '[role="banner"]', '[role="navigation"]', '[role="complementary"]'
-  ],
-  CONTENT_SELECTORS: [
-    'article', 'main', '[role="main"]',
-    '.main-content', '.content', '#content',
-    '.post-content', '.entry-content', '.article-content'
-  ]
-};
+import { extractContent, validateContent } from '../utils/content-extractor.js';
+import { processSummarization, processFlashcardGeneration } from '../utils/ai-pipeline.js';
+import { createTask, getTask } from './task-manager.js';
+import { showProgressOverlay, getOverlay, showResultsOverlay } from './unified-overlay.js';
+import * as storage from '../data/storage.js';
 
-function getSelectionText() {
-  const sel = window.getSelection();
-  return sel && String(sel).trim() ? String(sel) : '';
-}
-
-function getPageText() {
-  return document.body ? document.body.innerText || '' : '';
-}
-
-function cleanupText(text) {
-  if (!text) return '';
-  return text
-    .replace(/\r\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/ {2,}/g, ' ')
-    .replace(/^ +| +$/gm, '')
-    .replace(/\t+/g, ' ')
-    .trim();
-}
-
-function extractMainContent(doc = document) {
-  const metadata = {
-    title: doc.title || '',
-    url: doc.location?.href || '',
-    extractedFrom: 'body',
-    hasMainContent: false
-  };
-
-  let contentRoot = null;
-  for (const selector of CONFIG.CONTENT_SELECTORS) {
-    contentRoot = doc.querySelector(selector);
-    if (contentRoot && contentRoot.innerText?.trim().length > 100) {
-      metadata.extractedFrom = selector;
-      metadata.hasMainContent = true;
-      break;
-    }
-  }
-
-  if (!contentRoot) {
-    contentRoot = doc.body;
-  }
-
-  const clone = contentRoot.cloneNode(true);
-  CONFIG.NOISE_SELECTORS.forEach(selector => {
-    clone.querySelectorAll(selector).forEach(el => el.remove());
-  });
-
-  const text = cleanupText(clone.innerText || clone.textContent || '');
-  metadata.characterCount = text.length;
-  metadata.wordCount = text.split(/\s+/).filter(w => w.length > 0).length;
-
-  return { text, metadata };
-}
-
-function extractSelection() {
-  const selection = window.getSelection();
-  const text = selection && String(selection).trim() ? String(selection).trim() : '';
-
-  return {
-    text: cleanupText(text),
-    metadata: {
-      title: document.title || '',
-      url: document.location?.href || '',
-      extractedFrom: 'selection',
-      characterCount: text.length,
-      wordCount: text.split(/\s+/).filter(w => w.length > 0).length,
-      hasSelection: text.length > 0
-    }
-  };
-}
-
-function splitBySemanticBoundaries(text) {
-  const sections = [];
-  const lines = text.split('\n');
-  let currentSection = { text: '', type: 'paragraph', heading: null };
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    const looksLikeHeading = (
-      (trimmed.length > 0 && trimmed.length < 80 && trimmed === trimmed.toUpperCase()) ||
-      (trimmed.length > 0 && trimmed.length < 100 && trimmed.endsWith(':'))
-    );
-
-    if (looksLikeHeading && currentSection.text.trim().length > 0) {
-      sections.push({ ...currentSection, text: currentSection.text.trim() });
-      currentSection = { text: '', type: 'paragraph', heading: trimmed };
-    } else {
-      currentSection.text += line + '\n';
-    }
-  }
-
-  if (currentSection.text.trim().length > 0) {
-    sections.push({ ...currentSection, text: currentSection.text.trim() });
-  }
-
-  return sections;
-}
-
-function chunkContent(text) {
-  if (text.length <= CONFIG.MAX_CHUNK_SIZE) {
-    return [{ text, index: 0, metadata: { total: 1, size: text.length } }];
-  }
-
-  const sections = splitBySemanticBoundaries(text);
-  const chunks = [];
-  let currentChunk = { text: '', sections: [] };
-
-  for (const section of sections) {
-    const sectionText = (section.heading ? section.heading + '\n' : '') + section.text;
-
-    if (currentChunk.text.length > 0 &&
-        currentChunk.text.length + sectionText.length > CONFIG.MAX_CHUNK_SIZE) {
-      chunks.push({
-        text: currentChunk.text.trim(),
-        index: chunks.length,
-        metadata: { sections: currentChunk.sections, size: currentChunk.text.length }
-      });
-
-      const overlapText = currentChunk.text.slice(-CONFIG.CHUNK_OVERLAP);
-      currentChunk = { text: overlapText + '\n', sections: [] };
-    }
-
-    currentChunk.text += sectionText + '\n\n';
-    currentChunk.sections.push(section.heading || 'Untitled section');
-  }
-
-  if (currentChunk.text.trim().length >= CONFIG.MIN_CHUNK_SIZE) {
-    chunks.push({
-      text: currentChunk.text.trim(),
-      index: chunks.length,
-      metadata: { sections: currentChunk.sections, size: currentChunk.text.length }
-    });
-  }
-
-  chunks.forEach(chunk => { chunk.metadata.total = chunks.length; });
-  return chunks;
-}
-
-function getEnhancedText(source) {
-  try {
-    let extraction;
-
-    if (source === 'selection') {
-      extraction = extractSelection();
-      if (!extraction.text || extraction.text.length < 10) {
-        extraction = extractMainContent();
-      }
-    } else {
-      extraction = extractMainContent();
-    }
-
-    const { text, metadata } = extraction;
-    const needsChunking = text.length > CONFIG.MAX_CHUNK_SIZE;
-    const chunks = needsChunking ? chunkContent(text) : [{
-      text,
-      index: 0,
-      metadata: { total: 1, size: text.length }
-    }];
-
-    const warnings = [];
-    if (!metadata.hasMainContent && metadata.extractedFrom === 'body') {
-      warnings.push('Could not identify main content area. Results may include navigation or ads.');
-    }
-
-    const valid = text.length >= 50;
-    const error = valid ? null : 'Content too short (minimum 50 characters)';
-
-    return {
-      text,
-      chunks,
-      metadata: { ...metadata, needsChunking, chunkCount: chunks.length },
-      needsChunking,
-      valid,
-      warnings,
-      error
-    };
-  } catch (error) {
-    console.error('Content extraction error:', error);
-    const text = source === 'selection' ? getSelectionText() : getPageText();
-    return {
-      text,
-      metadata: { extractedFrom: source, fallback: true },
-      chunks: [{ text, index: 0, metadata: { total: 1 } }],
-      needsChunking: false,
-      valid: text.length > 0,
-      warnings: ['Using fallback extraction due to error: ' + error.message],
-      error: error.message
-    };
-  }
-}
-
-// Shadow DOM overlay helpers
-let overlayRoot = null;
-let overlayShadow = null;
-let currentOperation = null; // Track current AI operation for cancellation
-
-function ensureShadowOverlay() {
-  if (overlayRoot && document.body.contains(overlayRoot)) return overlayRoot;
-  overlayRoot = document.createElement('div');
-  overlayRoot.id = 'quizzer-overlay-root';
-  overlayRoot.style.position = 'fixed';
-  overlayRoot.style.top = '16px';
-  overlayRoot.style.right = '16px';
-  overlayRoot.style.zIndex = '2147483647';
-  overlayRoot.style.isolation = 'isolate';
-  overlayShadow = overlayRoot.attachShadow({ mode: 'open' });
-
-  const link = document.createElement('link');
-  link.rel = 'stylesheet';
-  link.href = chrome.runtime.getURL('content/overlay.css');
-  overlayShadow.appendChild(link);
-
-  const container = document.createElement('div');
-  container.className = 'qz-container';
-
-  const card = document.createElement('div');
-  card.className = 'qz-card';
-
-  const header = document.createElement('div');
-  header.className = 'qz-header';
-  const title = document.createElement('h3');
-  title.className = 'qz-title';
-  title.textContent = 'Quizzer';
-  const actions = document.createElement('div');
-  actions.className = 'qz-actions';
-  const close = document.createElement('button');
-  close.type = 'button'; // Prevent form submission
-  close.className = 'qz-close qz-btn secondary';
-  close.setAttribute('aria-label', 'Close overlay');
-  close.textContent = '×';
-  close.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    e.stopImmediatePropagation(); // Stop all event propagation
-    closeOverlay();
-  }, { capture: true });
-  actions.appendChild(close);
-  header.append(title, actions);
-
-  const body = document.createElement('div');
-  body.id = 'qz-body';
-  body.className = 'qz-body';
-  body.tabIndex = 0;
-
-  card.append(header, body);
-  container.appendChild(card);
-  overlayShadow.appendChild(container);
-
-  document.documentElement.appendChild(overlayRoot);
-  return overlayRoot;
-}
-
-function updateOverlayBody(html) {
-  ensureShadowOverlay();
-  const body = overlayShadow.getElementById('qz-body');
-  if (body) body.innerHTML = html;
-}
-
-function showLoadingInOverlay(message) {
-  updateOverlayBody(`
-    <div class="qz-loading">
-      <div class="qz-spinner"></div>
-      <span>${message}</span>
-    </div>
-  `);
-}
-
-function closeOverlay() {
-  console.log('[Quizzer] Closing overlay...');
-
-  // Cancel any ongoing operation
-  if (currentOperation) {
-    console.log('[Quizzer] Cancelling operation:', currentOperation.type);
-
-    // Mark as cancelled first (prevents race conditions)
-    currentOperation.cancelled = true;
-
-    // Destroy AI session if exists
-    if (currentOperation.session && typeof currentOperation.session.destroy === 'function') {
-      try {
-        currentOperation.session.destroy();
-        console.log('[Quizzer] AI session destroyed');
-      } catch (e) {
-        // Ignore abort errors - they're expected
-        if (e.name !== 'AbortError' && !e.message?.includes('abort')) {
-          console.warn('[Quizzer] Error destroying session:', e);
-        }
-      }
-    }
-
-    currentOperation = null;
-  }
-
-  // Remove overlay from DOM
-  if (overlayRoot && overlayRoot.parentNode) {
-    try {
-      overlayRoot.parentNode.removeChild(overlayRoot);
-      overlayRoot = null;
-      overlayShadow = null;
-      console.log('[Quizzer] Overlay removed from DOM');
-    } catch (e) {
-      console.warn('[Quizzer] Error removing overlay:', e);
-    }
-  }
-
-  console.log('[Quizzer] Overlay closed and cleaned up');
-}
-
+/**
+ * Handles context menu actions
+ */
 async function handleContextAction(payload) {
   const { menuId, selectionText } = payload || {};
-  ensureShadowOverlay();
-
-  const actionName = menuId.replace('quizzer_', '').replace(/_/g, ' ');
   const source = selectionText ? 'selection' : 'page';
 
-  console.log('[Quizzer] Context menu action:', {
-    action: menuId,
-    source: source,
-    hasSelection: !!selectionText,
-    selectionLength: selectionText?.length || 0
-  });
+  console.log('[Quizzer] Context menu action:', menuId, source);
 
-  // Only handle summarize action for now
-  if (menuId === 'quizzer_summarize') {
-    // Initialize operation tracking
-    currentOperation = {
-      type: 'summarize',
-      cancelled: false,
-      session: null
-    };
-
-    showLoadingInOverlay(`Summarizing ${source}...`);
-
-    try {
-      // Get the content
-      const extraction = getEnhancedText(source);
-
-      // Check if cancelled
-      if (currentOperation?.cancelled) {
-        console.log('[Quizzer] Operation cancelled by user');
-        return;
-      }
-
-      console.log('[Quizzer] Extracted content:', {
-        textLength: extraction.text?.length || 0,
-        source: extraction.metadata.extractedFrom
-      });
-
-      if (!extraction.valid || !extraction.text) {
-        updateOverlayBody(`<span style="color: #d93025;">Error: ${extraction.error || 'No content to summarize'}</span>`);
-        currentOperation = null;
-        return;
-      }
-
-      // Check if Summarizer API is available
-      if (!('Summarizer' in self)) {
-        updateOverlayBody(`<span style="color: #d93025;">Summarizer API not available in this Chrome version.</span>`);
-        currentOperation = null;
-        return;
-      }
-
-      // Check if cancelled
-      if (currentOperation?.cancelled) {
-        console.log('[Quizzer] Operation cancelled by user');
-        return;
-      }
-
-      showLoadingInOverlay('Creating summarizer...');
-      const availability = await self.Summarizer.availability();
-      if (availability === 'unavailable') {
-        updateOverlayBody(`<span style="color: #d93025;">Summarizer unavailable on this device.</span>`);
-        currentOperation = null;
-        return;
-      }
-
-      // Check if cancelled before creating session
-      if (currentOperation?.cancelled) {
-        console.log('[Quizzer] Operation cancelled by user');
-        return;
-      }
-
-      const summarizer = await self.Summarizer.create({
-        type: 'key-points',
-        length: 'medium',
-        format: 'markdown',
-        outputLanguage: 'en'
-      });
-
-      // Store session for potential cleanup
-      currentOperation.session = summarizer;
-
-      // Check if cancelled after creating session
-      if (currentOperation?.cancelled) {
-        console.log('[Quizzer] Operation cancelled by user');
-        if (summarizer.destroy) summarizer.destroy();
-        return;
-      }
-
-      showLoadingInOverlay('Generating summary...');
-
-      // Summarize
-      const summary = await summarizer.summarize(extraction.text, {
-        context: 'Audience: general web reader.'
-      });
-
-      // Check if cancelled after summarization
-      if (currentOperation?.cancelled) {
-        console.log('[Quizzer] Operation cancelled by user');
-        if (summarizer.destroy) summarizer.destroy();
-        return;
-      }
-
-      // Log results
-      console.log('[Quizzer] Summary generated:', summary);
-
-      // Display summary in overlay
-      updateOverlayBody(`<div style="white-space: pre-wrap; max-height: 300px; overflow: auto;">${summary}</div>`);
-
-      // Cleanup
-      if (summarizer.destroy) {
-        summarizer.destroy();
-      }
-
-      // Clear operation tracking
-      currentOperation = null;
-    } catch (error) {
-      // Check if error is due to cancellation
-      if (currentOperation?.cancelled) {
-        console.log('[Quizzer] Operation cancelled by user');
-        return;
-      }
-
-      // Check if error is an abort error (happens when AI session is destroyed)
-      if (error.name === 'AbortError' || error.message?.includes('abort')) {
-        console.log('[Quizzer] Operation aborted');
-        currentOperation = null;
-        return;
-      }
-
-      console.error('[Quizzer] Summarization error:', error);
-      updateOverlayBody(`<span style="color: #d93025;">Error: ${error.message}</span>`);
-      currentOperation = null;
+  try {
+    if (menuId === 'quizzer_summarize') {
+      await handleSummarize(source);
+    } else if (menuId === 'quizzer_flashcards') {
+      await handleFlashcards(source);
+    } else if (menuId === 'quizzer_add_to_queue') {
+      await handleAddToQueue(source);
+    } else if (menuId === 'quizzer_translate') {
+      await handleTranslate();
+    } else if (menuId === 'quizzer_proofread') {
+      await handleProofread();
+    } else if (menuId === 'quizzer_rewrite') {
+      await handleRewrite();
     }
-  } else if (menuId === 'quizzer_add_to_queue') {
-    // Add to queue action - delegate to popup
-    showLoadingInOverlay('Adding to report queue...');
-    try {
-      // Send message to background to open popup with add-to-queue action
-      updateOverlayBody(`<span style="color: #1a73e8;">Added to queue! Open the extension to view.</span>`);
-
-      // Auto-dismiss after 2 seconds
-      setTimeout(() => {
-        const overlay = overlayShadow?.host;
-        if (overlay && overlay.style.display !== 'none') {
-          overlay.style.display = 'none';
-        }
-      }, 2000);
-    } catch (error) {
-      console.error('[Quizzer] Add to queue error:', error);
-      updateOverlayBody(`<span style="color: #d93025;">Error: ${error.message}</span>`);
-    }
-  } else if (menuId === 'quizzer_flashcards') {
-    updateOverlayBody(`<span>Flashcard generation - Open the extension popup to generate flashcards!</span>`);
-    setTimeout(() => {
-      const overlay = overlayShadow?.host;
-      if (overlay && overlay.style.display !== 'none') {
-        overlay.style.display = 'none';
-      }
-    }, 2000);
-  } else if (menuId === 'quizzer_write_report') {
-    updateOverlayBody(`<span>Report generation - Open the extension popup to generate a report from your queue!</span>`);
-    setTimeout(() => {
-      const overlay = overlayShadow?.host;
-      if (overlay && overlay.style.display !== 'none') {
-        overlay.style.display = 'none';
-      }
-    }, 2000);
-  } else {
-    updateOverlayBody(`<span>${actionName} - Feature coming soon!</span>`);
+  } catch (error) {
+    console.error('[Quizzer] Action error:', error);
+    showTemporaryMessage('Error: ' + error.message, true);
   }
 }
 
+/**
+ * Handles summarization
+ */
+async function handleSummarize(source) {
+  // Extract content
+  const extraction = extractContent(source);
+  const validation = validateContent(extraction);
+
+  if (!validation.valid) {
+    showTemporaryMessage('Error: ' + validation.reason, true);
+    return;
+  }
+
+  // Check for duplicate task
+  const task = createTask('summarize', extraction.text, {
+    source,
+    url: document.location.href,
+    title: document.title
+  });
+
+  if (!task) {
+    showTemporaryMessage('A summary is already being generated for this content.');
+    return;
+  }
+
+  // Show progress overlay
+  showProgressOverlay(task.id);
+
+  try {
+    // Load settings
+    const settings = await storage.getSettings({
+      summaryType: 'key-points',
+      summaryLength: 'medium',
+      summaryFormat: 'markdown',
+      outputLanguage: 'en'
+    });
+
+    // Check cache
+    const cacheKey = storage.generateCacheKey(
+      document.location.href,
+      storage.hashContent(extraction.text),
+      'summary'
+    );
+
+    const cached = await storage.getCachedItem(cacheKey);
+    if (cached) {
+      console.log('[Quizzer] Using cached summary');
+      await task.complete(cached.content);
+
+      // Save to history
+      await saveSummaryToHistory(cached.content, source);
+      return;
+    }
+
+    // Start task
+    await task.start(extraction.chunks.length);
+
+    // Process summarization
+    const result = await processSummarization({
+      source,
+      type: settings.summaryType,
+      length: settings.summaryLength,
+      format: settings.summaryFormat,
+      outputLanguage: settings.outputLanguage,
+      onProgress: (message, percent) => {
+        task.updateProgress(percent, message);
+      }
+    });
+
+    // Complete task
+    await task.complete(result.summary);
+
+    // Cache result
+    await storage.setCachedItem(cacheKey, result.summary);
+
+    // Save to history
+    await saveSummaryToHistory(result.summary, source);
+
+    // Show result in the same overlay that showed progress
+    const overlay = getOverlay(task.id);
+    if (overlay) {
+      overlay.showSummary(result.summary, 'Summary');
+    }
+
+  } catch (error) {
+    task.setError(error);
+    throw error;
+  }
+}
+
+/**
+ * Handles flashcard generation
+ */
+async function handleFlashcards(source) {
+  // Extract content
+  const extraction = extractContent(source);
+  const validation = validateContent(extraction);
+
+  if (!validation.valid) {
+    showTemporaryMessage('Error: ' + validation.reason, true);
+    return;
+  }
+
+  // Check for cached summary to optimize
+  const summaryCacheKey = storage.generateCacheKey(
+    document.location.href,
+    storage.hashContent(extraction.text),
+    'summary'
+  );
+
+  const cachedSummary = await storage.getCachedItem(summaryCacheKey);
+  let contentForFlashcards = extraction.text;
+
+  // If we have a cached summary for the whole page, use it for efficiency
+  if (cachedSummary && source === 'page') {
+    console.log('[Quizzer] Using cached summary for flashcard generation');
+    contentForFlashcards = cachedSummary.content;
+  }
+
+  // Check for duplicate task
+  const task = createTask('flashcards', contentForFlashcards, {
+    source,
+    url: document.location.href,
+    title: document.title
+  });
+
+  if (!task) {
+    showTemporaryMessage('Flashcards are already being generated for this content.');
+    return;
+  }
+
+  // Show progress overlay
+  showProgressOverlay(task.id);
+
+  try {
+    // Load settings
+    const settings = await storage.getSettings({
+      fcCount: 5,
+      fcDifficulty: 'medium',
+      fcLanguage: 'en'
+    });
+
+    // Check cache
+    const cacheKey = storage.generateCacheKey(
+      document.location.href,
+      storage.hashContent(contentForFlashcards),
+      'flashcards'
+    );
+
+    const cached = await storage.getCachedItem(cacheKey);
+    if (cached) {
+      console.log('[Quizzer] Using cached flashcards');
+      await task.complete(cached.content);
+
+      // Save and show deck
+      const deck = await saveDeckToHistory(cached.content, source);
+      const overlay = getOverlay(task.id);
+      if (overlay) {
+        overlay.showFlashcards(deck);
+      }
+      return;
+    }
+
+    // Start task
+    const chunkCount = Math.ceil(contentForFlashcards.length / 6000);
+    await task.start(chunkCount);
+
+    // Process flashcard generation - use the extraction with potentially optimized content
+    const optimizedExtraction = {
+      ...extraction,
+      text: contentForFlashcards,
+      chunks: contentForFlashcards.length > 6000
+        ? extraction.chunks
+        : [{ text: contentForFlashcards, index: 0, metadata: { total: 1 } }]
+    };
+
+    const result = await processFlashcardGeneration({
+      source,
+      count: parseInt(settings.fcCount),
+      difficulty: settings.fcDifficulty,
+      outputLanguage: settings.fcLanguage,
+      onProgress: (message, percent) => {
+        task.updateProgress(percent, message);
+      }
+    });
+
+    // Validate flashcards
+    const validation = storage.validateFlashcards(result.flashcards);
+    if (!validation.valid) {
+      throw new Error('Generated flashcards are invalid: ' + validation.reason);
+    }
+
+    // Complete task
+    await task.complete(validation.cards);
+
+    // Cache result
+    await storage.setCachedItem(cacheKey, validation.cards);
+
+    // Save and show deck
+    const deck = await saveDeckToHistory(validation.cards, source);
+    const overlay = getOverlay(task.id);
+    if (overlay) {
+      overlay.showFlashcards(deck);
+    }
+
+  } catch (error) {
+    task.setError(error);
+    throw error;
+  }
+}
+
+/**
+ * Handles adding to report queue
+ */
+async function handleAddToQueue(source) {
+  // Extract content
+  const extraction = extractContent(source);
+  const validation = validateContent(extraction);
+
+  if (!validation.valid) {
+    showTemporaryMessage('Error: ' + validation.reason, true);
+    return;
+  }
+
+  try {
+    // Check if we have a cached summary for optimization
+    const summaryCacheKey = storage.generateCacheKey(
+      document.location.href,
+      storage.hashContent(extraction.text),
+      'summary'
+    );
+
+    const cachedSummary = await storage.getCachedItem(summaryCacheKey);
+
+    // Add to collection
+    const item = await storage.addToCollection({
+      url: document.location.href,
+      title: document.title,
+      sourceType: source,
+      text: extraction.text,
+      textExcerpt: extraction.text.substring(0, 200),
+      summary: cachedSummary?.content || null // Store summary if available
+    });
+
+    if (item) {
+      showTemporaryMessage('Added to report queue! Open the extension to generate a report.');
+    } else {
+      showTemporaryMessage('This content is already in the queue.');
+    }
+  } catch (error) {
+    console.error('[Quizzer] Add to queue error:', error);
+    showTemporaryMessage('Error: ' + error.message, true);
+  }
+}
+
+/**
+ * Handles translation of selected text
+ */
+async function handleTranslate() {
+  // Get selected text
+  const selection = window.getSelection();
+  const text = selection?.toString().trim();
+
+  if (!text) {
+    showTemporaryMessage('Please select text to translate.', true);
+    return;
+  }
+
+  if (text.length > 5000) {
+    showTemporaryMessage('Selected text is too long. Please select less than 5000 characters.', true);
+    return;
+  }
+
+  // Load settings to get target language
+  const settings = await storage.getSettings({
+    translationTargetLang: 'es'
+  });
+
+  const targetLang = settings.translationTargetLang;
+
+  // Show progress overlay
+  const overlay = showResultsOverlay();
+  overlay.showResults(
+    '<div style="text-align: center; padding: 40px;"><div style="margin-bottom: 8px;">Translating...</div><div style="font-size: 12px; opacity: 0.7;">Using Chrome Translation API</div></div>',
+    'Translation'
+  );
+
+  try {
+    // Check Translator API availability
+    if (!('translation' in self)) {
+      throw new Error('Translation API not available. Enable "Translation API" in chrome://flags and restart Chrome');
+    }
+
+    // Check if translation is available for this language pair
+    const canTranslate = await translation.canTranslate({
+      sourceLanguage: 'en', // Auto-detect would be ideal but we'll use English as default
+      targetLanguage: targetLang
+    });
+
+    console.log('[Quizzer] Translation availability:', canTranslate);
+
+    if (canTranslate === 'no') {
+      throw new Error(`Translation to ${targetLang} is not available on this device`);
+    }
+
+    // Create translator
+    const translator = await translation.createTranslator({
+      sourceLanguage: 'en',
+      targetLanguage: targetLang
+    });
+
+    // Translate
+    const translatedText = await translator.translate(text);
+
+    console.log('[Quizzer] Translation complete');
+
+    // Show result in overlay
+    overlay.showResults(
+      `<div>
+        <div style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid rgba(128,128,128,0.2);">
+          <div style="font-size: 11px; font-weight: 600; opacity: 0.6; margin-bottom: 8px;">ORIGINAL</div>
+          <div style="line-height: 1.6;">${escapeHtml(text)}</div>
+        </div>
+        <div>
+          <div style="font-size: 11px; font-weight: 600; opacity: 0.6; margin-bottom: 8px;">TRANSLATED (${targetLang.toUpperCase()})</div>
+          <div style="line-height: 1.6; font-weight: 500;">${escapeHtml(translatedText)}</div>
+        </div>
+      </div>`,
+      'Translation'
+    );
+
+  } catch (error) {
+    console.error('[Quizzer] Translation error:', error);
+    overlay.showResults(
+      `<div style="color: #d93025; text-align: center; padding: 20px;">${escapeHtml('Error: ' + error.message)}</div>`,
+      'Translation Error'
+    );
+  }
+}
+
+/**
+ * Handles proofreading of selected text
+ */
+async function handleProofread() {
+  // Get selected text
+  const selection = window.getSelection();
+  const text = selection?.toString().trim();
+
+  if (!text) {
+    showTemporaryMessage('Please select text to proofread.', true);
+    return;
+  }
+
+  if (text.length > 5000) {
+    showTemporaryMessage('Selected text is too long. Please select less than 5000 characters.', true);
+    return;
+  }
+
+  // Show progress overlay
+  const overlay = showResultsOverlay();
+  overlay.showResults(
+    '<div style="text-align: center; padding: 40px;"><div style="margin-bottom: 8px;">Proofreading...</div><div style="font-size: 12px; opacity: 0.7;">Checking for errors</div></div>',
+    'Proofreading'
+  );
+
+  try {
+    // Check Proofreader API availability
+    if (!('Proofreader' in self)) {
+      throw new Error('Proofreader API not available. This requires Chrome 141+ and origin trial enrollment.');
+    }
+
+    const availability = await Proofreader.availability();
+    console.log('[Quizzer] Proofreader availability:', availability);
+
+    if (availability === 'downloadable') {
+      overlay.showResults(
+        '<div style="text-align: center; padding: 40px;"><div style="margin-bottom: 8px;">Downloading proofreader model...</div><div style="font-size: 12px; opacity: 0.7;">This may take a moment</div></div>',
+        'Proofreading'
+      );
+    }
+
+    // Create proofreader
+    const proofreader = await Proofreader.create({
+      expectedInputLanguages: ['en']
+    });
+
+    // Proofread
+    const result = await proofreader.proofread(text);
+
+    console.log('[Quizzer] Proofreading complete:', result);
+
+    // Format corrections
+    let correctionsHTML = '';
+    if (result.corrections && result.corrections.length > 0) {
+      correctionsHTML = '<div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(128,128,128,0.2);">';
+      correctionsHTML += '<div style="font-size: 11px; font-weight: 600; opacity: 0.6; margin-bottom: 12px;">CORRECTIONS (' + result.corrections.length + ')</div>';
+
+      result.corrections.forEach((correction, idx) => {
+        const errorText = text.substring(correction.startIndex, correction.endIndex);
+        correctionsHTML += `<div style="margin-bottom: 12px; padding: 12px; background: rgba(217,48,37,0.1); border-radius: 6px;">
+          <div style="font-weight: 600; margin-bottom: 4px;">${idx + 1}. "${escapeHtml(errorText)}"</div>
+          <div style="font-size: 12px; opacity: 0.8;">${escapeHtml(correction.explanation || correction.type || 'Error detected')}</div>
+        </div>`;
+      });
+
+      correctionsHTML += '</div>';
+    }
+
+    // Show result in overlay
+    overlay.showResults(
+      `<div>
+        <div style="margin-bottom: 16px;">
+          <div style="font-size: 11px; font-weight: 600; opacity: 0.6; margin-bottom: 8px;">ORIGINAL TEXT</div>
+          <div style="line-height: 1.6; padding: 12px; background: rgba(128,128,128,0.05); border-radius: 6px;">${escapeHtml(text)}</div>
+        </div>
+        <div>
+          <div style="font-size: 11px; font-weight: 600; opacity: 0.6; margin-bottom: 8px; color: ${result.corrections.length === 0 ? '#34a853' : '#1a73e8'};">
+            ${result.corrections.length === 0 ? '✓ NO ERRORS FOUND' : 'CORRECTED TEXT'}
+          </div>
+          <div style="line-height: 1.6; font-weight: 500; padding: 12px; background: rgba(52,168,83,0.1); border-radius: 6px;">${escapeHtml(result.correctedInput)}</div>
+        </div>
+        ${correctionsHTML}
+      </div>`,
+      'Proofreading Results'
+    );
+
+    // Cleanup
+    if (proofreader.destroy) {
+      proofreader.destroy();
+    }
+
+  } catch (error) {
+    console.error('[Quizzer] Proofreading error:', error);
+    overlay.showResults(
+      `<div style="color: #d93025; text-align: center; padding: 20px;">${escapeHtml('Error: ' + error.message)}</div>`,
+      'Proofreading Error'
+    );
+  }
+}
+
+/**
+ * Handles rewriting of selected text
+ */
+async function handleRewrite() {
+  // Get selected text
+  const selection = window.getSelection();
+  const text = selection?.toString().trim();
+
+  if (!text) {
+    showTemporaryMessage('Please select text to rewrite.', true);
+    return;
+  }
+
+  if (text.length > 5000) {
+    showTemporaryMessage('Selected text is too long. Please select less than 5000 characters.', true);
+    return;
+  }
+
+  // Load settings for rewriter options
+  const settings = await storage.getSettings({
+    rewriterTone: 'as-is',
+    rewriterLength: 'as-is',
+    rewriterFormat: 'as-is'
+  });
+
+  // Show progress overlay
+  const overlay = showResultsOverlay();
+  overlay.showResults(
+    '<div style="text-align: center; padding: 40px;"><div style="margin-bottom: 8px;">Rewriting...</div><div style="font-size: 12px; opacity: 0.7;">Using Chrome Rewriter API</div></div>',
+    'Rewriting'
+  );
+
+  try {
+    // Check Rewriter API availability
+    if (!('Rewriter' in self)) {
+      throw new Error('Rewriter API not available. This requires Chrome 137+ and origin trial enrollment.');
+    }
+
+    const availability = await Rewriter.availability();
+    console.log('[Quizzer] Rewriter availability:', availability);
+
+    if (availability === 'downloadable' || availability === 'after-download') {
+      overlay.showResults(
+        '<div style="text-align: center; padding: 40px;"><div style="margin-bottom: 8px;">Downloading rewriter model...</div><div style="font-size: 12px; opacity: 0.7;">This may take a moment</div></div>',
+        'Rewriting'
+      );
+    }
+
+    // Create rewriter
+    const rewriter = await Rewriter.create({
+      tone: settings.rewriterTone,
+      length: settings.rewriterLength,
+      format: settings.rewriterFormat,
+      expectedInputLanguages: ['en']
+    });
+
+    // Rewrite
+    const rewrittenText = await rewriter.rewrite(text);
+
+    console.log('[Quizzer] Rewriting complete');
+
+    // Show result in overlay
+    overlay.showResults(
+      `<div>
+        <div style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid rgba(128,128,128,0.2);">
+          <div style="font-size: 11px; font-weight: 600; opacity: 0.6; margin-bottom: 8px;">ORIGINAL</div>
+          <div style="line-height: 1.6;">${escapeHtml(text)}</div>
+        </div>
+        <div>
+          <div style="font-size: 11px; font-weight: 600; opacity: 0.6; margin-bottom: 8px;">REWRITTEN</div>
+          <div style="line-height: 1.6; font-weight: 500;">${escapeHtml(rewrittenText)}</div>
+          <div style="margin-top: 12px; font-size: 11px; opacity: 0.7;">
+            Tone: ${settings.rewriterTone} • Length: ${settings.rewriterLength} • Format: ${settings.rewriterFormat}
+          </div>
+        </div>
+      </div>`,
+      'Rewriting Results'
+    );
+
+    // Cleanup
+    if (rewriter.destroy) {
+      rewriter.destroy();
+    }
+
+  } catch (error) {
+    console.error('[Quizzer] Rewriting error:', error);
+    overlay.showResults(
+      `<div style="color: #d93025; text-align: center; padding: 20px;">${escapeHtml('Error: ' + error.message)}</div>`,
+      'Rewriting Error'
+    );
+  }
+}
+
+/**
+ * Shows temporary message (for actions that don't need progress)
+ */
+function showTemporaryMessage(message, isError = false) {
+  const overlay = showResultsOverlay();
+  const color = isError ? '#d93025' : '#34a853';
+  overlay.showResults(
+    `<div style="color: ${color}; text-align: center; padding: 20px;">${escapeHtml(message)}</div>`,
+    isError ? 'Error' : 'Success'
+  );
+
+  setTimeout(() => {
+    overlay.remove();
+  }, 3000);
+}
+
+/**
+ * Escapes HTML to prevent XSS
+ */
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+/**
+ * Saves summary to history
+ */
+async function saveSummaryToHistory(summary, source) {
+  const summaries = await chrome.storage.local.get('quizzer.summaries');
+  const list = summaries['quizzer.summaries'] || [];
+
+  list.unshift({
+    id: Date.now().toString(),
+    title: document.title || 'Untitled',
+    url: document.location.href,
+    sourceType: source,
+    text: summary,
+    createdAt: new Date().toISOString()
+  });
+
+  // Keep last 100
+  await chrome.storage.local.set({
+    'quizzer.summaries': list.slice(0, 100)
+  });
+}
+
+/**
+ * Saves flashcard deck to history
+ */
+async function saveDeckToHistory(cards, source) {
+  const deck = {
+    id: storage.createDeckId(),
+    title: document.title || 'Untitled Deck',
+    sourceUrl: document.location.href,
+    sourceTitle: document.title,
+    sourceType: source,
+    cards,
+    createdAt: new Date().toISOString()
+  };
+
+  await storage.saveDeck(deck);
+  return deck;
+}
+
+// Legacy showDeck function removed - now using unified overlay
+
+// Auto-start functionality (runs silently in background)
+async function checkAutoStart() {
+  // Wait a bit for page to load
+  await new Promise(resolve => setTimeout(resolve, 2000));
+
+  try {
+    const settings = await storage.getSettings({
+      autoSummarize: false,
+      autoFlashcards: false
+    });
+
+    // Auto-summarize if enabled
+    if (settings.autoSummarize) {
+      console.log('[Quizzer] Auto-summarize enabled, starting...');
+      // Run silently without showing progress overlay
+      try {
+        await handleSummarize('page');
+      } catch (error) {
+        console.error('[Quizzer] Auto-summarize error:', error);
+      }
+    }
+
+    // Auto-flashcards if enabled
+    if (settings.autoFlashcards) {
+      console.log('[Quizzer] Auto-flashcards enabled, starting...');
+      // Run silently without showing progress overlay
+      try {
+        await handleFlashcards('page');
+      } catch (error) {
+        console.error('[Quizzer] Auto-flashcards error:', error);
+      }
+    }
+  } catch (error) {
+    console.error('[Quizzer] Auto-start check error:', error);
+  }
+}
+
+// Run auto-start on page load
+if (document.readyState === 'complete') {
+  checkAutoStart();
+} else {
+  window.addEventListener('load', checkAutoStart);
+}
+
+// Message listeners
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === 'QUIZZER_CHECK_SELECTION') {
-    // Check if there's an active selection
     const selection = window.getSelection();
     const hasSelection = selection && selection.toString().trim().length > 0;
     sendResponse({ hasSelection });
@@ -512,33 +698,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg?.type === 'QUIZZER_GET_TEXT') {
     const { source, enhanced = true } = msg;
-
     if (enhanced) {
-      // Use enhanced extraction with cleanup and metadata
-      const extraction = getEnhancedText(source);
+      const extraction = extractContent(source);
       sendResponse(extraction);
     } else {
-      // Fallback to simple extraction
-      const text = source === 'selection' ? (getSelectionText() || getPageText()) : getPageText();
+      const sel = window.getSelection();
+      const text = source === 'selection' && sel ? sel.toString().trim() : document.body.innerText;
       sendResponse({ text });
     }
-    return true;
-  }
-
-  if (msg?.type === 'QUIZZER_GET_TEXT_SIMPLE') {
-    // Simple extraction for backward compatibility
-    const { source } = msg;
-    const text = source === 'selection' ? (getSelectionText() || getPageText()) : getPageText();
-    sendResponse({ text });
     return true;
   }
 
   if (msg?.type === 'QUIZZER_CONTEXT_ACTION') {
     handleContextAction(msg.payload);
   }
+
   if (msg?.type === 'QUIZZER_SHOW_DECK') {
     try {
-      showDeckOverlay(msg.deck);
+      const overlay = showResultsOverlay();
+      overlay.showFlashcards(msg.deck);
       sendResponse({ ok: true });
     } catch (e) {
       console.error('Failed to show deck:', e);
@@ -546,63 +724,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
     return true;
   }
+
+  if (msg?.type === 'QUIZZER_SHOW_CONTENT') {
+    try {
+      const { item, contentType } = msg;
+      const overlay = showResultsOverlay();
+
+      if (contentType === 'summary') {
+        overlay.showSummary(item.text || '', 'Summary');
+      } else if (contentType === 'deck') {
+        overlay.showFlashcards(item);
+      } else if (contentType === 'report') {
+        overlay.showSummary(item.content || '', 'Report');
+      } else if (contentType === 'queue-item') {
+        overlay.showSummary(item.fullText || item.textExcerpt || '', 'Queue Item');
+      }
+
+      sendResponse({ ok: true });
+    } catch (e) {
+      console.error('Failed to show content:', e);
+      sendResponse({ ok: false, error: e.message });
+    }
+    return true;
+  }
 });
 
-// Flashcards overlay
-function showDeckOverlay(deck) {
-  if (!deck || !Array.isArray(deck.cards) || deck.cards.length === 0) {
-    updateOverlayBody('<em>No flashcards to display.</em>');
-    return;
-  }
-  ensureShadowOverlay();
-  const body = overlayShadow.getElementById('qz-body');
-  if (!body) return;
-
-  let index = 0;
-
-  function render() {
-    const card = deck.cards[index];
-    const options = card.options.map((opt, i) => {
-      return `
-        <label class="qz-option">
-          <input class="qz-radio" type="radio" name="qz-opt" value="${i}" ${i===0?'checked':''} />
-          <span>${opt}</span>
-        </label>`;
-    }).join('');
-
-    body.innerHTML = `
-      <div class="qz-flashcard" role="group" aria-label="Flashcard ${index+1} of ${deck.cards.length}">
-        <div class="qz-question"><strong>Q${index+1}.</strong> ${card.question}</div>
-        <div class="qz-options">${options}</div>
-        <div class="qz-footer">
-          <div class="qz-index">${index+1} / ${deck.cards.length}</div>
-          <div class="qz-actions">
-            <button class="qz-btn secondary" id="qz-prev" ${index===0?'disabled':''}>Prev</button>
-            <button class="qz-btn" id="qz-reveal">Reveal</button>
-            <button class="qz-btn secondary" id="qz-next" ${index===deck.cards.length-1?'disabled':''}>Next</button>
-          </div>
-        </div>
-        <div id="qz-explanation" style="display:none; margin-top:8px;">💡 ${card.explanation || ''}</div>
-      </div>`;
-
-    overlayShadow.getElementById('qz-reveal').onclick = () => {
-      const exp = overlayShadow.getElementById('qz-explanation');
-      exp.style.display = exp.style.display === 'none' ? 'block' : 'none';
-    };
-    const prev = overlayShadow.getElementById('qz-prev');
-    const next = overlayShadow.getElementById('qz-next');
-    if (prev) prev.onclick = () => { if (index>0) { index--; render(); } };
-    if (next) next.onclick = () => { if (index<deck.cards.length-1) { index++; render(); } };
-
-    // Keyboard a11y: left/right to navigate, space to reveal
-    body.onkeydown = (e) => {
-      if (e.key === 'ArrowLeft') { if (index>0) { index--; render(); e.preventDefault(); } }
-      if (e.key === 'ArrowRight') { if (index<deck.cards.length-1) { index++; render(); e.preventDefault(); } }
-      if (e.key === ' ') { const exp = overlayShadow.getElementById('qz-explanation'); exp.style.display = exp.style.display === 'none' ? 'block' : 'none'; e.preventDefault(); }
-      if (e.key === 'Escape') { closeOverlay(); }
-    };
-  }
-
-  render();
-  body.focus();
-}
+console.log('[Quizzer] Content script loaded');
