@@ -1,4 +1,4 @@
-/* Quizzer Popup - Clean History & Settings UI with Google Chrome Colors */
+/* Quizzer Popup - Clean History & Settings UI with System Theme Support */
 
 :root {
   /* Google Chrome Brand Colors */
@@ -19,7 +19,7 @@
   --chrome-yellow-hover: #ea8600;
   --chrome-green-hover: #188038;
 
-  /* Base colors */
+  /* Light theme base colors (default) */
   --bg-primary: #ffffff;
   --bg-secondary: #f8f9fa;
   --bg-hover: #e8eaed;
@@ -27,6 +27,7 @@
   --text-secondary: #5f6368;
   --text-tertiary: #80868b;
   --border-color: #dadce0;
+  --chrome-border: #dadce0; /* Fix for popup.html */
 
   /* Functional colors using Chrome palette */
   --accent-color: var(--chrome-blue-dark);
@@ -37,8 +38,60 @@
   --danger-color: var(--chrome-red-dark);
   --danger-hover: var(--chrome-red-hover);
 
+  /* Alpha variants for light theme */
+  --accent-alpha-10: rgba(26, 115, 232, 0.1);
+  --accent-alpha-08: rgba(26, 115, 232, 0.08);
+  --success-alpha-10: rgba(52, 168, 83, 0.1);
+  --error-alpha-10: rgba(234, 67, 53, 0.1);
+  --error-alpha-08: rgba(234, 67, 53, 0.08);
+  --warning-alpha-10: rgba(249, 171, 0, 0.1);
+  --neutral-alpha-10: rgba(128, 128, 128, 0.1);
+  --neutral-alpha-20: rgba(128, 128, 128, 0.2);
+  --white-alpha-10: rgba(255, 255, 255, 0.1);
+  --white-alpha-20: rgba(255, 255, 255, 0.2);
+  --black-alpha-50: rgba(0, 0, 0, 0.5);
+
   --radius: 8px;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+/* Dark theme */
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Dark theme base colors */
+    --bg-primary: #1e1e1e;
+    --bg-secondary: #2d2d2d;
+    --bg-hover: #3e3e3e;
+    --text-primary: #e8e8e8;
+    --text-secondary: #b8b8b8;
+    --text-tertiary: #888888;
+    --border-color: #454545;
+    --chrome-border: #454545;
+
+    /* Adjust accent colors for dark theme - use brighter variants */
+    --accent-color: #4285f4;
+    --accent-hover: #5a95f5;
+    --success-color: #34a853;
+    --error-color: #ea4335;
+    --warning-color: #fbbc04;
+    --danger-color: #ea4335;
+    --danger-hover: #f55244;
+
+    /* Alpha variants for dark theme */
+    --accent-alpha-10: rgba(66, 133, 244, 0.15);
+    --accent-alpha-08: rgba(66, 133, 244, 0.12);
+    --success-alpha-10: rgba(52, 168, 83, 0.15);
+    --error-alpha-10: rgba(234, 67, 53, 0.15);
+    --error-alpha-08: rgba(234, 67, 53, 0.12);
+    --warning-alpha-10: rgba(251, 188, 4, 0.15);
+    --neutral-alpha-10: rgba(200, 200, 200, 0.1);
+    --neutral-alpha-20: rgba(200, 200, 200, 0.15);
+    --white-alpha-10: rgba(255, 255, 255, 0.08);
+    --white-alpha-20: rgba(255, 255, 255, 0.15);
+    --black-alpha-50: rgba(0, 0, 0, 0.7);
+
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  }
 }
 
 * {
@@ -129,12 +182,12 @@ header h1 {
 
 .tab:hover {
   opacity: 0.9;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--white-alpha-10);
 }
 
 .tab.active {
   opacity: 1;
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--white-alpha-20);
 }
 
 /* Tab Panels */
@@ -313,7 +366,7 @@ section[role="tabpanel"][hidden] {
 .settings-group select:focus {
   outline: none;
   border-color: var(--accent-color);
-  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.1);
+  box-shadow: 0 0 0 3px var(--accent-alpha-10);
 }
 
 .checkbox-label {
@@ -394,7 +447,7 @@ button:disabled {
 }
 
 .btn-text:hover {
-  background: rgba(26, 115, 232, 0.08);
+  background: var(--accent-alpha-08);
 }
 
 .btn-group {
@@ -417,17 +470,17 @@ button:disabled {
 }
 
 .status.success {
-  background: rgba(52, 168, 83, 0.1);
+  background: var(--success-alpha-10);
   color: var(--success-color);
 }
 
 .status.error {
-  background: rgba(234, 67, 53, 0.1);
+  background: var(--error-alpha-10);
   color: var(--error-color);
 }
 
 .status.warning {
-  background: rgba(249, 171, 0, 0.1);
+  background: var(--warning-alpha-10);
   color: var(--warning-color);
   font-weight: 500;
 }
@@ -480,7 +533,7 @@ button:disabled {
 }
 
 .item-action-btn:hover {
-  background: rgba(26, 115, 232, 0.08);
+  background: var(--accent-alpha-08);
 }
 
 .item-action-btn.delete {
@@ -488,7 +541,7 @@ button:disabled {
 }
 
 .item-action-btn.delete:hover {
-  background: rgba(234, 67, 53, 0.08);
+  background: var(--error-alpha-08);
 }
 
 /* Modal */
@@ -498,7 +551,7 @@ button:disabled {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--black-alpha-50);
   display: flex;
   align-items: center;
   justify-content: center;

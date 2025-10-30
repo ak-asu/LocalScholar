@@ -45,19 +45,28 @@ async function handleContextAction(payload) {
 
 /**
  * Handles summarization
+ *
+ * NOTE: Currently uses batch summarization. Streaming mode could be implemented
+ * for real-time progressive results by using summarizeStreaming() and updating
+ * the overlay incrementally. See ai-pipeline.js for streaming documentation.
  */
 async function handleSummarize(source) {
-  // Extract content
-  const extraction = extractContent(source);
-  const validation = validateContent(extraction);
+  // Extract text content - use innerText for whole page
+  let text;
+  if (source === 'page') {
+    text = document.body.innerText;
+  } else {
+    const selection = window.getSelection();
+    text = selection.toString();
+  }
 
-  if (!validation.valid) {
-    showTemporaryMessage('Error: ' + validation.reason, true);
+  if (!text || text.trim().length === 0) {
+    showTemporaryMessage('Error: No text content found', true);
     return;
   }
 
   // Check for duplicate task
-  const task = createTask('summarize', extraction.text, {
+  const task = createTask('summarize', text, {
     source,
     url: document.location.href,
     title: document.title
@@ -69,7 +78,7 @@ async function handleSummarize(source) {
   }
 
   // Show progress overlay
-  showProgressOverlay(task.id);
+  const overlay = showProgressOverlay(task.id);
 
   try {
     // Load settings
@@ -83,7 +92,7 @@ async function handleSummarize(source) {
     // Check cache
     const cacheKey = storage.generateCacheKey(
       document.location.href,
-      storage.hashContent(extraction.text),
+      storage.hashContent(text),
       'summary'
     );
 
@@ -92,17 +101,22 @@ async function handleSummarize(source) {
       console.log('[Quizzer] Using cached summary');
       await task.complete(cached.content);
 
+      // Show cached result in overlay
+      if (overlay) {
+        overlay.showSummary(cached.content, 'Summary');
+      }
+
       // Save to history
       await saveSummaryToHistory(cached.content, source);
       return;
     }
 
     // Start task
-    await task.start(extraction.chunks.length);
+    await task.start(1);
 
-    // Process summarization
+    // Process summarization (batch mode)
     const result = await processSummarization({
-      source,
+      text,
       type: settings.summaryType,
       length: settings.summaryLength,
       format: settings.summaryFormat,
@@ -121,8 +135,7 @@ async function handleSummarize(source) {
     // Save to history
     await saveSummaryToHistory(result.summary, source);
 
-    // Show result in the same overlay that showed progress
-    const overlay = getOverlay(task.id);
+    // Show result in overlay
     if (overlay) {
       overlay.showSummary(result.summary, 'Summary');
     }
@@ -137,24 +150,29 @@ async function handleSummarize(source) {
  * Handles flashcard generation
  */
 async function handleFlashcards(source) {
-  // Extract content
-  const extraction = extractContent(source);
-  const validation = validateContent(extraction);
+  // Extract text content - use innerText for whole page
+  let text;
+  if (source === 'page') {
+    text = document.body.innerText;
+  } else {
+    const selection = window.getSelection();
+    text = selection.toString();
+  }
 
-  if (!validation.valid) {
-    showTemporaryMessage('Error: ' + validation.reason, true);
+  if (!text || text.trim().length === 0) {
+    showTemporaryMessage('Error: No text content found', true);
     return;
   }
 
   // Check for cached summary to optimize
   const summaryCacheKey = storage.generateCacheKey(
     document.location.href,
-    storage.hashContent(extraction.text),
+    storage.hashContent(text),
     'summary'
   );
 
   const cachedSummary = await storage.getCachedItem(summaryCacheKey);
-  let contentForFlashcards = extraction.text;
+  let contentForFlashcards = text;
 
   // If we have a cached summary for the whole page, use it for efficiency
   if (cachedSummary && source === 'page') {
@@ -207,20 +225,11 @@ async function handleFlashcards(source) {
     }
 
     // Start task
-    const chunkCount = Math.ceil(contentForFlashcards.length / 6000);
-    await task.start(chunkCount);
+    await task.start(1);
 
-    // Process flashcard generation - use the extraction with potentially optimized content
-    const optimizedExtraction = {
-      ...extraction,
-      text: contentForFlashcards,
-      chunks: contentForFlashcards.length > 6000
-        ? extraction.chunks
-        : [{ text: contentForFlashcards, index: 0, metadata: { total: 1 } }]
-    };
-
+    // Process flashcard generation
     const result = await processFlashcardGeneration({
-      source,
+      text: contentForFlashcards,
       count: parseInt(settings.fcCount),
       difficulty: settings.fcDifficulty,
       outputLanguage: settings.fcLanguage,
@@ -362,13 +371,13 @@ async function handleTranslate() {
     // Show result in overlay
     overlay.showResults(
       `<div>
-        <div style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid rgba(128,128,128,0.2);">
-          <div style="font-size: 11px; font-weight: 600; opacity: 0.6; margin-bottom: 8px;">ORIGINAL</div>
-          <div style="line-height: 1.6;">${escapeHtml(text)}</div>
+        <div class="qz-section-divider">
+          <div class="qz-section-label">ORIGINAL</div>
+          <div class="qz-content-text">${escapeHtml(text)}</div>
         </div>
         <div>
-          <div style="font-size: 11px; font-weight: 600; opacity: 0.6; margin-bottom: 8px;">TRANSLATED (${targetLang.toUpperCase()})</div>
-          <div style="line-height: 1.6; font-weight: 500;">${escapeHtml(translatedText)}</div>
+          <div class="qz-section-label">TRANSLATED (${targetLang.toUpperCase()})</div>
+          <div class="qz-content-text qz-highlight-text">${escapeHtml(translatedText)}</div>
         </div>
       </div>`,
       'Translation'
@@ -377,7 +386,7 @@ async function handleTranslate() {
   } catch (error) {
     console.error('[Quizzer] Translation error:', error);
     overlay.showResults(
-      `<div style="color: #d93025; text-align: center; padding: 20px;">${escapeHtml('Error: ' + error.message)}</div>`,
+      `<div class="qz-error-text" style="text-align: center; padding: 20px;">${escapeHtml('Error: ' + error.message)}</div>`,
       'Translation Error'
     );
   }
@@ -437,12 +446,12 @@ async function handleProofread() {
     // Format corrections
     let correctionsHTML = '';
     if (result.corrections && result.corrections.length > 0) {
-      correctionsHTML = '<div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(128,128,128,0.2);">';
-      correctionsHTML += '<div style="font-size: 11px; font-weight: 600; opacity: 0.6; margin-bottom: 12px;">CORRECTIONS (' + result.corrections.length + ')</div>';
+      correctionsHTML = '<div class="qz-section-divider-thin">';
+      correctionsHTML += '<div class="qz-section-label" style="margin-bottom: 12px;">CORRECTIONS (' + result.corrections.length + ')</div>';
 
       result.corrections.forEach((correction, idx) => {
         const errorText = text.substring(correction.startIndex, correction.endIndex);
-        correctionsHTML += `<div style="margin-bottom: 12px; padding: 12px; background: rgba(217,48,37,0.1); border-radius: 6px;">
+        correctionsHTML += `<div class="qz-correction-box">
           <div style="font-weight: 600; margin-bottom: 4px;">${idx + 1}. "${escapeHtml(errorText)}"</div>
           <div style="font-size: 12px; opacity: 0.8;">${escapeHtml(correction.explanation || correction.type || 'Error detected')}</div>
         </div>`;
@@ -455,14 +464,14 @@ async function handleProofread() {
     overlay.showResults(
       `<div>
         <div style="margin-bottom: 16px;">
-          <div style="font-size: 11px; font-weight: 600; opacity: 0.6; margin-bottom: 8px;">ORIGINAL TEXT</div>
-          <div style="line-height: 1.6; padding: 12px; background: rgba(128,128,128,0.05); border-radius: 6px;">${escapeHtml(text)}</div>
+          <div class="qz-section-label">ORIGINAL TEXT</div>
+          <div class="qz-original-bg">${escapeHtml(text)}</div>
         </div>
         <div>
-          <div style="font-size: 11px; font-weight: 600; opacity: 0.6; margin-bottom: 8px; color: ${result.corrections.length === 0 ? '#34a853' : '#1a73e8'};">
+          <div class="qz-section-label" style="color: ${result.corrections.length === 0 ? 'var(--success-color, #34a853)' : 'inherit'};">
             ${result.corrections.length === 0 ? '✓ NO ERRORS FOUND' : 'CORRECTED TEXT'}
           </div>
-          <div style="line-height: 1.6; font-weight: 500; padding: 12px; background: rgba(52,168,83,0.1); border-radius: 6px;">${escapeHtml(result.correctedInput)}</div>
+          <div class="qz-corrected-bg">${escapeHtml(result.correctedInput)}</div>
         </div>
         ${correctionsHTML}
       </div>`,
@@ -477,7 +486,7 @@ async function handleProofread() {
   } catch (error) {
     console.error('[Quizzer] Proofreading error:', error);
     overlay.showResults(
-      `<div style="color: #d93025; text-align: center; padding: 20px;">${escapeHtml('Error: ' + error.message)}</div>`,
+      `<div class="qz-error-text" style="text-align: center; padding: 20px;">${escapeHtml('Error: ' + error.message)}</div>`,
       'Proofreading Error'
     );
   }
@@ -547,13 +556,13 @@ async function handleRewrite() {
     // Show result in overlay
     overlay.showResults(
       `<div>
-        <div style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid rgba(128,128,128,0.2);">
-          <div style="font-size: 11px; font-weight: 600; opacity: 0.6; margin-bottom: 8px;">ORIGINAL</div>
-          <div style="line-height: 1.6;">${escapeHtml(text)}</div>
+        <div class="qz-section-divider">
+          <div class="qz-section-label">ORIGINAL</div>
+          <div class="qz-content-text">${escapeHtml(text)}</div>
         </div>
         <div>
-          <div style="font-size: 11px; font-weight: 600; opacity: 0.6; margin-bottom: 8px;">REWRITTEN</div>
-          <div style="line-height: 1.6; font-weight: 500;">${escapeHtml(rewrittenText)}</div>
+          <div class="qz-section-label">REWRITTEN</div>
+          <div class="qz-content-text qz-highlight-text">${escapeHtml(rewrittenText)}</div>
           <div style="margin-top: 12px; font-size: 11px; opacity: 0.7;">
             Tone: ${settings.rewriterTone} • Length: ${settings.rewriterLength} • Format: ${settings.rewriterFormat}
           </div>
@@ -570,7 +579,7 @@ async function handleRewrite() {
   } catch (error) {
     console.error('[Quizzer] Rewriting error:', error);
     overlay.showResults(
-      `<div style="color: #d93025; text-align: center; padding: 20px;">${escapeHtml('Error: ' + error.message)}</div>`,
+      `<div class="qz-error-text" style="text-align: center; padding: 20px;">${escapeHtml('Error: ' + error.message)}</div>`,
       'Rewriting Error'
     );
   }

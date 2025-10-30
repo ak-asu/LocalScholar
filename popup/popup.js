@@ -38,7 +38,6 @@ const DEFAULT_SETTINGS = {
   rewriterFormat: 'as-is',
   enableCaching: true,
   cacheExpiration: 24,
-  chunkSize: 4000,
   autoSummarize: false,
   autoFlashcards: false
 };
@@ -163,7 +162,6 @@ async function initializeSettings() {
   document.getElementById('rewriter-format').value = settings.rewriterFormat;
   document.getElementById('enable-caching').checked = settings.enableCaching;
   document.getElementById('cache-expiration').value = settings.cacheExpiration;
-  document.getElementById('chunk-size').value = settings.chunkSize;
   document.getElementById('auto-summarize').checked = settings.autoSummarize || false;
   document.getElementById('auto-flashcards').checked = settings.autoFlashcards || false;
 }
@@ -188,7 +186,6 @@ function setupSettingsAutoSave() {
         rewriterFormat: document.getElementById('rewriter-format').value,
         enableCaching: document.getElementById('enable-caching').checked,
         cacheExpiration: parseInt(document.getElementById('cache-expiration').value),
-        chunkSize: parseInt(document.getElementById('chunk-size').value),
         autoSummarize: document.getElementById('auto-summarize').checked,
         autoFlashcards: document.getElementById('auto-flashcards').checked
       };

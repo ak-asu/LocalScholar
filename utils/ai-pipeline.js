@@ -1,68 +1,49 @@
 /**
  * AI Processing Pipeline
  *
- * Coordinates AI processing for content extraction, chunking, and summary-of-summaries.
+ * Coordinates AI processing for content extraction with streaming support.
  * Handles both Summarizer API and Prompt API for various use cases.
  */
 
-import { extractContent, validateContent, estimateTokens } from './content-extractor.js';
+import { estimateTokens } from './content-extractor.js';
 
 /**
- * Pipeline configuration
- */
-const PIPELINE_CONFIG = {
-  // Maximum size before forcing chunking
-  MAX_SINGLE_PROCESS_SIZE: 8000,
-  // Strategy for combining chunk summaries
-  COMBINATION_STRATEGY: 'hierarchical', // 'hierarchical' or 'concatenate'
-};
-
-/**
- * Processes content through summarization with automatic chunking
+ * Processes content through batch summarization
+ *
+ * NOTE: The Summarizer API supports both batch and streaming modes:
+ * - Batch mode (used here): summarize() - processes input as a whole, returns complete result
+ * - Streaming mode (not currently used): summarizeStreaming() - returns results in real-time
+ *
+ * Streaming could be implemented in the future for better UX by showing progressive results.
+ * See Chrome AI documentation for details on streaming implementation.
+ *
  * @param {Object} options - Processing options
- * @param {string} options.source - 'selection' or 'page'
+ * @param {string} options.text - Text content to summarize
  * @param {string} options.type - Summarizer type (tldr, key-points, etc.)
  * @param {string} options.length - Summarizer length (short, medium, long)
  * @param {string} options.format - Summarizer format (markdown, plain-text)
  * @param {string} options.outputLanguage - Output language code
  * @param {Function} options.onProgress - Progress callback (message, percent)
- * @param {Function} options.onChunkComplete - Called after each chunk is processed
- * @returns {Object} - { summary: string, metadata: object }
+ * @returns {Promise<Object>} - { summary: string, metadata: object }
  */
 export async function processSummarization(options) {
   const {
-    source = 'page',
+    text,
     type = 'key-points',
     length = 'medium',
     format = 'markdown',
     outputLanguage = 'en',
-    onProgress = () => {},
-    onChunkComplete = () => {}
+    onProgress = () => {}
   } = options;
+
+  if (!text) {
+    throw new Error('No text provided for summarization');
+  }
 
   // Ensure outputLanguage is always set (safety check)
   const safeOutputLanguage = outputLanguage || 'en';
 
-  onProgress('Extracting content...', 5);
-
-  // Extract and validate content
-  const extraction = extractContent(source, {
-    maxChunkSize: PIPELINE_CONFIG.MAX_SINGLE_PROCESS_SIZE
-  });
-
-  const validation = validateContent(extraction);
-  if (!validation.valid) {
-    throw new Error(validation.reason);
-  }
-
-  // Emit warnings if any
-  validation.warnings.forEach(warning => {
-    console.warn('Content validation warning:', warning);
-  });
-
-  const { chunks, metadata } = extraction;
-
-  onProgress(`Processing ${chunks.length} chunk(s)...`, 10);
+  onProgress('Preparing summarization...', 5);
 
   // Check Summarizer availability
   if (!('Summarizer' in self)) {
@@ -78,94 +59,48 @@ export async function processSummarization(options) {
   }
 
   if (availability === 'downloadable') {
-    onProgress('Summarizer model will download on first use...', 12);
+    onProgress('Summarizer model will download on first use...', 10);
   }
 
-  // If single chunk, process directly
-  if (chunks.length === 1) {
-    onProgress('Summarizing content...', 20);
-    const summary = await summarizeChunk(chunks[0].text, {
-      type,
-      length,
-      format,
-      outputLanguage: safeOutputLanguage,
-      onProgress: (percent) => onProgress('Summarizing...', 20 + percent * 0.7)
-    });
+  onProgress('Summarizing content...', 15);
 
-    return {
-      summary,
-      metadata: {
-        ...metadata,
-        processingMode: 'single',
-        chunkCount: 1,
-        tokens: estimateTokens(chunks[0].text)
-      }
-    };
-  }
-
-  // Multiple chunks - process each and combine
-  onProgress(`Summarizing ${chunks.length} chunks...`, 20);
-
-  const chunkSummaries = [];
-  const progressPerChunk = 60 / chunks.length;
-
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    const baseProgress = 20 + (i * progressPerChunk);
-
-    onProgress(`Summarizing chunk ${i + 1}/${chunks.length}...`, baseProgress);
-
-    const chunkSummary = await summarizeChunk(chunk.text, {
-      type,
-      length: 'short', // Use shorter summaries for chunks
-      format,
-      outputLanguage: safeOutputLanguage,
-      onProgress: (percent) => onProgress(
-        `Summarizing chunk ${i + 1}/${chunks.length}...`,
-        baseProgress + percent * progressPerChunk
-      )
-    });
-
-    chunkSummaries.push({
-      summary: chunkSummary,
-      index: i,
-      sections: chunk.metadata.sections
-    });
-
-    onChunkComplete(i + 1, chunks.length, chunkSummary);
-  }
-
-  // Combine summaries
-  onProgress('Combining summaries...', 85);
-
-  const finalSummary = await combineSummaries(chunkSummaries, {
+  // Use batch mode
+  const summary = await summarizeBatch(text, {
     type,
     length,
     format,
     outputLanguage: safeOutputLanguage,
-    originalMetadata: metadata
+    onProgress: (percent) => onProgress('Summarizing...', 15 + percent * 0.8)
   });
 
   onProgress('Complete', 100);
 
   return {
-    summary: finalSummary,
+    summary,
     metadata: {
-      ...metadata,
-      processingMode: 'chunked',
-      chunkCount: chunks.length,
-      combinationStrategy: PIPELINE_CONFIG.COMBINATION_STRATEGY
+      textLength: text.length,
+      tokens: estimateTokens(text)
     }
   };
 }
 
 /**
- * Summarizes a single chunk of text
+ * Summarizes text in batch mode
+ *
+ * NOTE: Streaming mode is available via summarizeStreaming() but not currently used.
+ * Example streaming implementation:
+ *
+ *   const stream = summarizer.summarizeStreaming(text);
+ *   for await (const chunk of stream) {
+ *     // chunk contains progressively updated summary text
+ *     updateUI(chunk);
+ *   }
+ *
  * @param {string} text - Text to summarize
  * @param {Object} options - Summarization options
- * @returns {string} - Summary text
+ * @returns {Promise<string>} - Summary text
  */
-async function summarizeChunk(text, options = {}) {
+async function summarizeBatch(text, options = {}) {
   const {
     type = 'key-points',
     length = 'medium',
@@ -174,10 +109,8 @@ async function summarizeChunk(text, options = {}) {
     onProgress = () => {}
   } = options;
 
-  // Ensure outputLanguage is always set to a valid value - never undefined
   const safeOutputLanguage = outputLanguage || 'en';
 
-  // Build create options explicitly to ensure outputLanguage is included
   const createOptions = {
     type,
     length,
@@ -194,140 +127,51 @@ async function summarizeChunk(text, options = {}) {
     };
   }
 
-  console.log('[Quizzer] Summarizer.create() called with:', createOptions);
-  console.log('[Quizzer] outputLanguage value:', safeOutputLanguage, 'type:', typeof safeOutputLanguage);
+  console.log('[Quizzer] Summarizer.create() called with batch mode:', createOptions);
 
   const summarizer = await Summarizer.create(createOptions);
 
   try {
-    console.log('[Quizzer] Starting summarization with text length:', text.length);
+    console.log('[Quizzer] Starting batch summarization, text length:', text.length);
 
-    // Use streaming for better UX
-    // Second parameter is an options object with optional 'context' field
-    const stream = summarizer.summarizeStreaming(text, {
-      context: 'This article is intended for a general web audience.'
-    });
+    const result = await summarizer.summarize(text);
 
-    let result = '';
-    let chunkCount = 0;
-    let longestChunk = '';
-
-    for await (const chunk of stream) {
-      chunkCount++;
-
-      // Keep track of the longest chunk (which should be the accumulated text)
-      if (chunk.length > longestChunk.length) {
-        longestChunk = chunk;
-      }
-
-      // Log every 20th chunk and the last few
-      if (chunkCount % 20 === 0 || chunkCount > 105) {
-        console.log(`[Quizzer] Chunk ${chunkCount}, length: ${chunk.length}, content: "${chunk.substring(0, 50)}..."`);
-      }
-
-      result = chunk; // Each chunk should contain the full accumulated text
-    }
-
-    // If final chunk is empty but we have a longer one, use it
-    if (result.length === 0 && longestChunk.length > 0) {
-      console.warn('[Quizzer] Final chunk was empty, using longest chunk instead');
-      result = longestChunk;
-    }
-
-    console.log('[Quizzer] Summarization complete, total chunks:', chunkCount, 'final length:', result.length);
-    console.log('[Quizzer] Final summary preview:', result.substring(0, 100));
+    console.log('[Quizzer] Batch summarization complete, result length:', result.length);
     return result;
   } finally {
-    // Clean up
     if (summarizer.destroy) {
       summarizer.destroy();
     }
   }
 }
 
-/**
- * Combines multiple chunk summaries into a final summary
- * @param {Array} chunkSummaries - Array of chunk summaries
- * @param {Object} options - Combination options
- * @returns {string} - Combined summary
- */
-async function combineSummaries(chunkSummaries, options) {
-  const {
-    type = 'key-points',
-    length = 'medium',
-    format = 'markdown',
-    outputLanguage = 'en',
-    originalMetadata = {}
-  } = options;
-
-  // Strategy 1: Simple concatenation with headers (for key-points)
-  if (type === 'key-points' || PIPELINE_CONFIG.COMBINATION_STRATEGY === 'concatenate') {
-    let combined = '';
-    if (format === 'markdown') {
-      combined = chunkSummaries.map((cs, idx) => {
-        const heading = cs.sections?.[0] || `Part ${idx + 1}`;
-        return `### ${heading}\n\n${cs.summary}`;
-      }).join('\n\n');
-    } else {
-      combined = chunkSummaries.map((cs, idx) => {
-        const heading = cs.sections?.[0] || `Part ${idx + 1}`;
-        return `${heading}\n${cs.summary}`;
-      }).join('\n\n');
-    }
-    return combined;
-  }
-
-  // Strategy 2: Hierarchical - summarize the summaries (for tldr, teaser, headline)
-  const combinedText = chunkSummaries.map(cs => cs.summary).join('\n\n');
-
-  // If the combined summaries are short enough, summarize them again
-  if (estimateTokens(combinedText) < 8000) {
-    return await summarizeChunk(combinedText, {
-      type,
-      length,
-      format,
-      outputLanguage
-    });
-  }
-
-  // If still too large, fall back to concatenation
-  return combinedText;
-}
 
 /**
  * Processes flashcard generation from content
  * @param {Object} options - Processing options
- * @param {string} options.source - 'selection' or 'page'
+ * @param {string} options.text - Text content to generate flashcards from
  * @param {number} options.count - Number of flashcards to generate
  * @param {string} options.difficulty - 'easy', 'medium', 'hard'
  * @param {string} options.outputLanguage - Output language code
  * @param {Function} options.onProgress - Progress callback
- * @returns {Object} - { flashcards: array, metadata: object }
+ * @returns {Promise<Object>} - { flashcards: array, metadata: object }
  */
 export async function processFlashcardGeneration(options) {
   const {
-    source = 'page',
+    text,
     count = 5,
     difficulty = 'medium',
     outputLanguage = 'en',
     onProgress = () => {}
   } = options;
 
-  onProgress('Extracting content...', 5);
-
-  // Extract content (flashcards work better with smaller chunks)
-  const extraction = extractContent(source, {
-    maxChunkSize: 6000 // Smaller chunks for flashcards
-  });
-
-  const validation = validateContent(extraction);
-  if (!validation.valid) {
-    throw new Error(validation.reason);
+  if (!text) {
+    throw new Error('No text provided for flashcard generation');
   }
 
-  onProgress('Preparing flashcard generation...', 10);
+  onProgress('Preparing flashcard generation...', 5);
 
-  // Check Prompt API (LanguageModel) availability - per Chrome AI documentation
+  // Check Prompt API (LanguageModel) availability
   if (!('LanguageModel' in self)) {
     throw new Error('Prompt API not available. Enable "Optimization Guide On Device Model" in chrome://flags and restart Chrome');
   }
@@ -337,51 +181,23 @@ export async function processFlashcardGeneration(options) {
     throw new Error('Language Model unavailable on this device');
   }
 
-  onProgress('Language Model ready...', 15);
+  onProgress('Language Model ready...', 10);
+  onProgress('Generating flashcards...', 20);
 
-  const { chunks, metadata } = extraction;
-
-  // For flashcards, we'll generate from each chunk and combine
-  const flashcardsPerChunk = Math.ceil(count / chunks.length);
-  const allFlashcards = [];
-
-  onProgress(`Generating flashcards from ${chunks.length} section(s)...`, 20);
-
-  const progressPerChunk = 70 / chunks.length;
-
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    const baseProgress = 20 + (i * progressPerChunk);
-
-    onProgress(`Generating flashcards ${i + 1}/${chunks.length}...`, baseProgress);
-
-    const chunkFlashcards = await generateFlashcardsFromChunk(chunk.text, {
-      count: flashcardsPerChunk,
-      difficulty,
-      outputLanguage
-    });
-
-    allFlashcards.push(...chunkFlashcards);
-
-    // Stop if we have enough
-    if (allFlashcards.length >= count) {
-      break;
-    }
-  }
-
-  onProgress('Finalizing flashcards...', 95);
-
-  // Trim to requested count
-  const finalFlashcards = allFlashcards.slice(0, count);
+  const flashcards = await generateFlashcardsFromText(text, {
+    count,
+    difficulty,
+    outputLanguage
+  });
 
   onProgress('Complete', 100);
 
   return {
-    flashcards: finalFlashcards,
+    flashcards,
     metadata: {
-      ...metadata,
+      textLength: text.length,
       requestedCount: count,
-      generatedCount: finalFlashcards.length,
+      generatedCount: flashcards.length,
       difficulty,
       outputLanguage
     }
@@ -389,12 +205,12 @@ export async function processFlashcardGeneration(options) {
 }
 
 /**
- * Generates flashcards from a text chunk using Prompt API
+ * Generates flashcards from text using Prompt API
  * @param {string} text - Text to generate flashcards from
  * @param {Object} options - Generation options
- * @returns {Array} - Array of flashcard objects
+ * @returns {Promise<Array>} - Array of flashcard objects
  */
-async function generateFlashcardsFromChunk(text, options) {
+async function generateFlashcardsFromText(text, options) {
   const {
     count = 5,
     difficulty = 'medium',
@@ -566,7 +382,7 @@ export async function processReportGeneration(options) {
 
     // Check if content is too long, summarize it first
     if (estimateTokens(source.content) > 4000) {
-      const summary = await summarizeChunk(source.content, {
+      const summary = await summarizeBatch(source.content, {
         type: 'key-points',
         length: 'short',
         format: 'plain-text',
@@ -669,15 +485,11 @@ Write the report now:`;
 
 /**
  * Estimates processing time based on content size and operation
- * @param {Object} extraction - Content extraction result
+ * @param {number} textLength - Length of text to process
  * @param {string} operation - 'summarize' or 'flashcards'
  * @returns {number} - Estimated seconds
  */
-export function estimateProcessingTime(extraction, operation) {
-  const { metadata } = extraction;
-  const baseTime = operation === 'summarize' ? 2 : 5; // seconds per chunk
-  return baseTime * (metadata.chunkCount || 1);
+export function estimateProcessingTime(textLength, operation) {
+  const baseTime = operation === 'summarize' ? 3 : 8; // seconds per 1000 chars
+  return Math.ceil((textLength / 1000) * baseTime);
 }
-
-// Export configuration for customization
-export { PIPELINE_CONFIG };

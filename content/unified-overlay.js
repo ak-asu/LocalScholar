@@ -124,14 +124,14 @@ class UnifiedOverlay {
           <button class="qz-close" id="qz-close" aria-label="Cancel">×</button>
         </div>
         <div class="qz-body" style="padding: 12px;">
-          <div style="background: #e8eaed; border-radius: 4px; height: 8px; overflow: hidden; margin-bottom: 8px;">
-            <div id="qz-progress-bar" style="background: #1a73e8; height: 100%; width: 0%; transition: width 0.3s ease; border-radius: 4px;"></div>
+          <div class="qz-progress-container">
+            <div id="qz-progress-bar" class="qz-progress-bar"></div>
           </div>
-          <div style="display: flex; justify-content: space-between; font-size: 12px; opacity: 0.7; margin-bottom: 8px;">
+          <div class="qz-progress-info">
             <span id="qz-progress-percent">0%</span>
             <span id="qz-progress-time">Estimating...</span>
           </div>
-          <div id="qz-progress-message" style="font-size: 13px; opacity: 0.8;">Starting...</div>
+          <div id="qz-progress-message" class="qz-progress-message">Starting...</div>
         </div>
       </div>
     `;
@@ -287,16 +287,16 @@ class UnifiedOverlay {
     if (this.mode === 'progress') {
       const progressBar = this.shadow.getElementById('qz-progress-bar');
       if (progressBar) {
-        progressBar.style.background = '#d93025';
+        progressBar.classList.add('error');
       }
 
       const messageEl = this.shadow.getElementById('qz-progress-message');
       if (messageEl) {
         messageEl.textContent = 'Error: ' + (error?.message || 'Unknown error');
-        messageEl.style.color = '#d93025';
+        messageEl.classList.add('error');
       }
     } else {
-      this.showResults(`<div style="color: #d93025;">Error: ${error?.message || 'Unknown error'}</div>`, 'Error');
+      this.showResults(`<div class="qz-error-text">Error: ${error?.message || 'Unknown error'}</div>`, 'Error');
     }
   }
 
@@ -333,6 +333,13 @@ class UnifiedOverlay {
 
   /**
    * Shows summary text
+   *
+   * NOTE: Streaming mode could be implemented here for progressive display.
+   * This would involve:
+   * 1. Creating a streaming content element during progress mode
+   * 2. Updating it incrementally as chunks arrive from summarizeStreaming()
+   * 3. Auto-scrolling to show the latest content as it streams in
+   * See ai-pipeline.js for streaming API documentation.
    */
   showSummary(summaryText, title = 'Summary') {
     const content = `
@@ -371,30 +378,17 @@ class UnifiedOverlay {
             <div id="qz-options" style="display: grid; gap: 8px;">
               ${card.options.map((opt, i) => `
                 <button
-                  class="qz-option"
+                  class="qz-option qz-option-btn"
                   data-index="${i}"
-                  style="
-                    padding: 10px 12px;
-                    background: rgba(128,128,128,0.1);
-                    border: 2px solid transparent;
-                    border-radius: 6px;
-                    font-size: 13px;
-                    text-align: left;
-                    cursor: pointer;
-                    transition: all 0.2s;
-                    font-family: inherit;
-                  "
-                  onmouseover="this.style.background='rgba(128,128,128,0.2)'"
-                  onmouseout="if(!this.disabled) this.style.background='rgba(128,128,128,0.1)'"
                 >
                   <strong>${String.fromCharCode(65 + i)}.</strong> ${this.escapeHtml(opt)}
                 </button>
               `).join('')}
             </div>
-            <div id="qz-feedback" style="display:none; padding: 12px; border-radius: 6px; margin-top: 12px;"></div>
+            <div id="qz-feedback" class="qz-feedback"></div>
           </div>
-          <div id="qz-explanation" style="display:none; padding: 12px; background: rgba(52,168,83,0.1); border-radius: 6px; margin-top: 12px;">
-            <div style="font-weight: 600; margin-bottom: 4px; color: #34a853;">
+          <div id="qz-explanation" style="display:none;">
+            <div class="qz-explanation-header">
               ✓ Correct Answer: ${String.fromCharCode(65 + card.answer)}
             </div>
             <div style="font-size: 13px; line-height: 1.6;">
@@ -434,27 +428,21 @@ class UnifiedOverlay {
 
           // Color the selected option
           if (isCorrect) {
-            btn.style.background = 'rgba(52,168,83,0.2)';
-            btn.style.borderColor = '#34a853';
-            btn.style.color = '#34a853';
+            btn.classList.add('correct');
           } else {
-            btn.style.background = 'rgba(217,48,37,0.2)';
-            btn.style.borderColor = '#d93025';
-            btn.style.color = '#d93025';
+            btn.classList.add('incorrect');
 
             // Also highlight the correct answer
-            optionButtons[card.answer].style.background = 'rgba(52,168,83,0.2)';
-            optionButtons[card.answer].style.borderColor = '#34a853';
-            optionButtons[card.answer].style.color = '#34a853';
+            optionButtons[card.answer].classList.add('correct');
           }
 
           // Show feedback
           if (feedbackDiv) {
             feedbackDiv.style.display = 'block';
+            feedbackDiv.classList.add(isCorrect ? 'correct' : 'incorrect');
             feedbackDiv.innerHTML = isCorrect
-              ? '<div style="color: #34a853; font-weight: 600;">✓ Correct!</div>'
-              : '<div style="color: #d93025; font-weight: 600;">✗ Incorrect</div>';
-            feedbackDiv.style.background = isCorrect ? 'rgba(52,168,83,0.1)' : 'rgba(217,48,37,0.1)';
+              ? '<div class="qz-feedback-text correct">✓ Correct!</div>'
+              : '<div class="qz-feedback-text incorrect">✗ Incorrect</div>';
           }
 
           // Show explanation automatically after answering
