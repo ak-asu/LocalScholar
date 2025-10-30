@@ -120,6 +120,18 @@ LocalScholar is a Chrome extension that leverages Chrome's built-in AI APIs (Pro
 
 6. The extension should now appear in your toolbar!
 
+7. Advised to enable following APIs in chrome://flags/
+  - Enables optimization guide on device
+  - Prompt API for Gemini Nano
+  - Prompt API for Gemini Nano with Multimodal Input
+  - Summarization API for Gemini Nano
+  - Writer API for Gemini Nano
+  - Rewriter API for Gemini Nano
+  - Proofreader API for Gemini Nano
+  - Experimental translation API
+
+**Note: The models will be downloaded the first time, so the extension’s execution may take some time.**
+
 ## Usage
 
 ### Context Menu Actions (6 items)
