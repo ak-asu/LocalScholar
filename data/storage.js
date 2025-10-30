@@ -1,7 +1,7 @@
-// Simple storage wrapper for Quizzer decks using chrome.storage.local
-// All keys are namespaced under 'quizzer.'
+// Simple storage wrapper for LocalScholar decks using chrome.storage.local
+// All keys are namespaced under 'localscholar.'
 
-const NAMESPACE = 'quizzer.';
+const NAMESPACE = 'localscholar.';
 const KEYS = {
   DECKS: `${NAMESPACE}decks`,
   COLLECTION: `${NAMESPACE}collection`,

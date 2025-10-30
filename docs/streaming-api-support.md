@@ -132,7 +132,7 @@ async function handleSummarize(source) {
 ### 3. Update `unified-overlay.js`
 
 ```javascript
-class QuizzerOverlay extends HTMLElement {
+class LocalScholarOverlay extends HTMLElement {
   // Add new method for streaming updates
   updateStreamingContent(text) {
     // If in progress mode, switch to streaming display

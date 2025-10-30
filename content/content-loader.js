@@ -7,8 +7,8 @@
   try {
     // Import the main content script as a module
     await import(chrome.runtime.getURL('content/content.js'));
-    console.log('[Quizzer] Content script modules loaded successfully');
+    console.log('[LocalScholar] Content script modules loaded successfully');
   } catch (error) {
-    console.error('[Quizzer] Failed to load content script:', error);
+    console.error('[LocalScholar] Failed to load content script:', error);
   }
 })();

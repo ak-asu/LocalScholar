@@ -6,7 +6,7 @@ Last updated: 2025-01-29
 
 **All planned phases complete!** ✅
 
-Quizzer is feature-complete with an extended, unified design:
+LocalScholar is feature-complete with an extended, unified design:
 - Full summarization capabilities with multi-language support (10 languages)
 - Flashcard generation and review system
 - Report queue and synthesis with custom instructions

@@ -1,7 +1,7 @@
-# Quizzer Extension - Testing Guide
+# LocalScholar Extension - Testing Guide
 
 ## Overview
-This document provides comprehensive testing procedures for all Quizzer extension features.
+This document provides comprehensive testing procedures for all LocalScholar extension features.
 
 ---
 
@@ -11,7 +11,7 @@ This document provides comprehensive testing procedures for all Quizzer extensio
 1. Open Chrome and navigate to `chrome://extensions/`
 2. Enable "Developer mode" (toggle in top-right)
 3. Click "Load unpacked"
-4. Select the `Quizzer` directory
+4. Select the `LocalScholar` directory
 5. Verify extension loads without errors (check console)
 
 ### 2. Check Chrome Version
@@ -32,18 +32,18 @@ This document provides comprehensive testing procedures for all Quizzer extensio
 ### Test 1.1: Context Menu Visibility
 - **Action:** Right-click on any webpage
 - **Expected:** See 6 context menu items:
-  1. "Quizzer: Summarize"
-  2. "Quizzer: Create Flashcards"
-  3. "Quizzer: Add to Report Queue"
-  4. "Quizzer: Translate Selection"
-  5. "Quizzer: Proofread Selection"
-  6. "Quizzer: Rewrite Selection"
+  1. "LocalScholar: Summarize"
+  2. "LocalScholar: Create Flashcards"
+  3. "LocalScholar: Add to Report Queue"
+  4. "LocalScholar: Translate Selection"
+  5. "LocalScholar: Proofread Selection"
+  6. "LocalScholar: Rewrite Selection"
 - **Note:** Items 4-6 only visible when text is selected
 - **Status:** ✅ / ❌
 
 ### Test 1.2: Summarize - Selection
 - **Setup:** Select 2-3 paragraphs of text
-- **Action:** Right-click → Quizzer: Summarize
+- **Action:** Right-click → LocalScholar: Summarize
 - **Expected:**
   - Progress overlay appears (draggable)
   - Shows progress bar with time estimate
@@ -53,7 +53,7 @@ This document provides comprehensive testing procedures for all Quizzer extensio
 
 ### Test 1.3: Summarize - Whole Page
 - **Setup:** Don't select any text
-- **Action:** Right-click → Quizzer: Summarize
+- **Action:** Right-click → LocalScholar: Summarize
 - **Expected:**
   - Extracts main content (not nav/ads)
   - Shows chunking if page is large
@@ -63,7 +63,7 @@ This document provides comprehensive testing procedures for all Quizzer extensio
 
 ### Test 1.4: Create Flashcards - Selection
 - **Setup:** Select educational text
-- **Action:** Right-click → Quizzer: Create Flashcards
+- **Action:** Right-click → LocalScholar: Create Flashcards
 - **Expected:**
   - Progress overlay shows
   - Generates flashcards
@@ -74,7 +74,7 @@ This document provides comprehensive testing procedures for all Quizzer extensio
 
 ### Test 1.5: Create Flashcards - Whole Page
 - **Setup:** Navigate to article
-- **Action:** Right-click → Quizzer: Create Flashcards
+- **Action:** Right-click → LocalScholar: Create Flashcards
 - **Expected:**
   - Uses cached summary if available (optimization)
   - Generates appropriate number of cards (check settings)
@@ -83,7 +83,7 @@ This document provides comprehensive testing procedures for all Quizzer extensio
 
 ### Test 1.6: Add to Report Queue - Selection
 - **Setup:** Select text
-- **Action:** Right-click → Quizzer: Add to Report Queue
+- **Action:** Right-click → LocalScholar: Add to Report Queue
 - **Expected:**
   - Message "Added to report queue!"
   - Opens popup → Reports → Queue shows item
@@ -92,7 +92,7 @@ This document provides comprehensive testing procedures for all Quizzer extensio
 
 ### Test 1.7: Add to Report Queue - Whole Page
 - **Setup:** Don't select text
-- **Action:** Right-click → Quizzer: Add to Report Queue
+- **Action:** Right-click → LocalScholar: Add to Report Queue
 - **Expected:**
   - Extracts main content
   - Adds to queue
@@ -101,7 +101,7 @@ This document provides comprehensive testing procedures for all Quizzer extensio
 
 ### Test 1.8: Translate Selection
 - **Setup:** Select English text (1-2 paragraphs)
-- **Action:** Right-click → Quizzer: Translate Selection
+- **Action:** Right-click → LocalScholar: Translate Selection
 - **Expected:**
   - Shows progress briefly
   - Overlay displays with two sections:
@@ -114,7 +114,7 @@ This document provides comprehensive testing procedures for all Quizzer extensio
 
 ### Test 1.9: Proofread Selection
 - **Setup:** Select text with intentional grammar/spelling errors
-- **Action:** Right-click → Quizzer: Proofread Selection
+- **Action:** Right-click → LocalScholar: Proofread Selection
 - **Expected:**
   - Shows progress briefly
   - Overlay displays three sections:
@@ -128,7 +128,7 @@ This document provides comprehensive testing procedures for all Quizzer extensio
 
 ### Test 1.10: Rewrite Selection
 - **Setup:** Select text to rewrite, configure rewriter settings in popup
-- **Action:** Right-click → Quizzer: Rewrite Selection
+- **Action:** Right-click → LocalScholar: Rewrite Selection
 - **Expected:**
   - Shows progress briefly
   - Overlay displays two sections:

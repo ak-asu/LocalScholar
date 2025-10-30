@@ -1,7 +1,7 @@
-# Copilot Instructions for Quizzer Chrome Extension
+# Copilot Instructions for LocalScholar Chrome Extension
 
 ## Project Overview
-- **Quizzer** is a Chrome Manifest V3 extension for summarizing web pages or selections, generating MCQ/flashcards, and synthesizing reports from multiple sources. All data is stored locally; no cloud inference is used.
+- **LocalScholar** is a Chrome Manifest V3 extension for summarizing web pages or selections, generating MCQ/flashcards, and synthesizing reports from multiple sources. All data is stored locally; no cloud inference is used.
 - Major components: service worker (background), popup UI, options page, content script (with overlay), and optional offscreen document for long tasks.
 
 ## Architecture & Data Flow

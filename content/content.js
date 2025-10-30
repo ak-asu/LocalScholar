@@ -1,5 +1,5 @@
 /**
- * Quizzer Content Script
+ * LocalScholar Content Script
  *
  * Handles:
  * - Context menu actions (summarize, flashcards, add to queue)
@@ -21,24 +21,24 @@ async function handleContextAction(payload) {
   const { menuId, selectionText } = payload || {};
   const source = selectionText ? 'selection' : 'page';
 
-  console.log('[Quizzer] Context menu action:', menuId, source);
+  console.log('[LocalScholar] Context menu action:', menuId, source);
 
   try {
-    if (menuId === 'quizzer_summarize') {
+    if (menuId === 'localscholar_summarize') {
       await handleSummarize(source);
-    } else if (menuId === 'quizzer_flashcards') {
+    } else if (menuId === 'localscholar_flashcards') {
       await handleFlashcards(source);
-    } else if (menuId === 'quizzer_add_to_queue') {
+    } else if (menuId === 'localscholar_add_to_queue') {
       await handleAddToQueue(source);
-    } else if (menuId === 'quizzer_translate') {
+    } else if (menuId === 'localscholar_translate') {
       await handleTranslate();
-    } else if (menuId === 'quizzer_proofread') {
+    } else if (menuId === 'localscholar_proofread') {
       await handleProofread();
-    } else if (menuId === 'quizzer_rewrite') {
+    } else if (menuId === 'localscholar_rewrite') {
       await handleRewrite();
     }
   } catch (error) {
-    console.error('[Quizzer] Action error:', error);
+    console.error('[LocalScholar] Action error:', error);
     showTemporaryMessage('Error: ' + error.message, true);
   }
 }
@@ -98,7 +98,7 @@ async function handleSummarize(source) {
 
     const cached = await storage.getCachedItem(cacheKey);
     if (cached) {
-      console.log('[Quizzer] Using cached summary');
+      console.log('[LocalScholar] Using cached summary');
       await task.complete(cached.content);
 
       // Show cached result in overlay
@@ -176,7 +176,7 @@ async function handleFlashcards(source) {
 
   // If we have a cached summary for the whole page, use it for efficiency
   if (cachedSummary && source === 'page') {
-    console.log('[Quizzer] Using cached summary for flashcard generation');
+    console.log('[LocalScholar] Using cached summary for flashcard generation');
     contentForFlashcards = cachedSummary.content;
   }
 
@@ -212,7 +212,7 @@ async function handleFlashcards(source) {
 
     const cached = await storage.getCachedItem(cacheKey);
     if (cached) {
-      console.log('[Quizzer] Using cached flashcards');
+      console.log('[LocalScholar] Using cached flashcards');
       await task.complete(cached.content);
 
       // Save and show deck
@@ -302,7 +302,7 @@ async function handleAddToQueue(source) {
       showTemporaryMessage('This content is already in the queue.');
     }
   } catch (error) {
-    console.error('[Quizzer] Add to queue error:', error);
+    console.error('[LocalScholar] Add to queue error:', error);
     showTemporaryMessage('Error: ' + error.message, true);
   }
 }
@@ -351,22 +351,54 @@ async function handleTranslate() {
       targetLanguage: targetLang
     });
 
-    console.log('[Quizzer] Translation availability:', availability);
+    console.log('[LocalScholar] Translation availability:', availability);
 
-    if (availability !== 'available') {
-      throw new Error(`Translation to ${targetLang} is not available on this device`);
+    // The API may return 'readily', 'after-download', or 'no'
+    if (availability === 'no') {
+      throw new Error(`Translation to ${targetLang} is not supported on this device`);
     }
 
-    // Create translator
+    // If download is needed, show progress
+    let downloadInProgress = false;
+    if (availability === 'after-download') {
+      downloadInProgress = true;
+      overlay.showResults(
+        '<div style="text-align: center; padding: 40px;"><div style="margin-bottom: 8px;">Downloading translation model...</div><div id="download-progress" style="font-size: 12px; opacity: 0.7;">0%</div></div>',
+        'Translation'
+      );
+    }
+
+    // Create translator with download monitor
     const translator = await Translator.create({
       sourceLanguage: 'en',
-      targetLanguage: targetLang
+      targetLanguage: targetLang,
+      monitor(m) {
+        m.addEventListener('downloadprogress', (e) => {
+          const percent = Math.round(e.loaded * 100);
+          console.log(`[LocalScholar] Translation model download: ${percent}%`);
+          
+          if (downloadInProgress) {
+            const progressEl = document.getElementById('download-progress');
+            if (progressEl) {
+              progressEl.textContent = `${percent}%`;
+            }
+          }
+        });
+      }
     });
+
+    // Update UI when translation starts
+    if (downloadInProgress) {
+      overlay.showResults(
+        '<div style="text-align: center; padding: 40px;"><div style="margin-bottom: 8px;">Translating...</div><div style="font-size: 12px; opacity: 0.7;">Using Chrome Translation API</div></div>',
+        'Translation'
+      );
+    }
 
     // Translate
     const translatedText = await translator.translate(text);
 
-    console.log('[Quizzer] Translation complete');
+    console.log('[LocalScholar] Translation complete');
 
     // Show result in overlay
     overlay.showResults(
@@ -384,7 +416,7 @@ async function handleTranslate() {
     );
 
   } catch (error) {
-    console.error('[Quizzer] Translation error:', error);
+    console.error('[LocalScholar] Translation error:', error);
     overlay.showResults(
       `<div class="qz-error-text" style="text-align: center; padding: 20px;">${escapeHtml('Error: ' + error.message)}</div>`,
       'Translation Error'
@@ -424,7 +456,7 @@ async function handleProofread() {
     }
 
     const availability = await Proofreader.availability();
-    console.log('[Quizzer] Proofreader availability:', availability);
+    console.log('[LocalScholar] Proofreader availability:', availability);
 
     if (availability === 'downloadable') {
       overlay.showResults(
@@ -441,7 +473,7 @@ async function handleProofread() {
     // Proofread
     const result = await proofreader.proofread(text);
 
-    console.log('[Quizzer] Proofreading complete:', result);
+    console.log('[LocalScholar] Proofreading complete:', result);
 
     // Format corrections
     let correctionsHTML = '';
@@ -484,7 +516,7 @@ async function handleProofread() {
     }
 
   } catch (error) {
-    console.error('[Quizzer] Proofreading error:', error);
+    console.error('[LocalScholar] Proofreading error:', error);
     overlay.showResults(
       `<div class="qz-error-text" style="text-align: center; padding: 20px;">${escapeHtml('Error: ' + error.message)}</div>`,
       'Proofreading Error'
@@ -531,7 +563,7 @@ async function handleRewrite() {
     }
 
     const availability = await Rewriter.availability();
-    console.log('[Quizzer] Rewriter availability:', availability);
+    console.log('[LocalScholar] Rewriter availability:', availability);
 
     if (availability === 'downloadable' || availability === 'after-download') {
       overlay.showResults(
@@ -545,13 +577,14 @@ async function handleRewrite() {
       tone: settings.rewriterTone,
       length: settings.rewriterLength,
       format: settings.rewriterFormat,
-      expectedInputLanguages: ['en']
+      expectedInputLanguages: ['en', 'es'],
+      outputLanguage: 'en'
     });
 
     // Rewrite
     const rewrittenText = await rewriter.rewrite(text);
 
-    console.log('[Quizzer] Rewriting complete');
+    console.log('[LocalScholar] Rewriting complete');
 
     // Show result in overlay
     overlay.showResults(
@@ -577,7 +610,7 @@ async function handleRewrite() {
     }
 
   } catch (error) {
-    console.error('[Quizzer] Rewriting error:', error);
+    console.error('[LocalScholar] Rewriting error:', error);
     overlay.showResults(
       `<div class="qz-error-text" style="text-align: center; padding: 20px;">${escapeHtml('Error: ' + error.message)}</div>`,
       'Rewriting Error'
@@ -614,8 +647,8 @@ function escapeHtml(text) {
  * Saves summary to history
  */
 async function saveSummaryToHistory(summary, source) {
-  const summaries = await chrome.storage.local.get('quizzer.summaries');
-  const list = summaries['quizzer.summaries'] || [];
+  const summaries = await chrome.storage.local.get('localscholar.summaries');
+  const list = summaries['localscholar.summaries'] || [];
 
   list.unshift({
     id: Date.now().toString(),
@@ -628,7 +661,7 @@ async function saveSummaryToHistory(summary, source) {
 
   // Keep last 100
   await chrome.storage.local.set({
-    'quizzer.summaries': list.slice(0, 100)
+    'localscholar.summaries': list.slice(0, 100)
   });
 }
 
@@ -665,27 +698,27 @@ async function checkAutoStart() {
 
     // Auto-summarize if enabled
     if (settings.autoSummarize) {
-      console.log('[Quizzer] Auto-summarize enabled, starting...');
+      console.log('[LocalScholar] Auto-summarize enabled, starting...');
       // Run silently without showing progress overlay
       try {
         await handleSummarize('page');
       } catch (error) {
-        console.error('[Quizzer] Auto-summarize error:', error);
+        console.error('[LocalScholar] Auto-summarize error:', error);
       }
     }
 
     // Auto-flashcards if enabled
     if (settings.autoFlashcards) {
-      console.log('[Quizzer] Auto-flashcards enabled, starting...');
+      console.log('[LocalScholar] Auto-flashcards enabled, starting...');
       // Run silently without showing progress overlay
       try {
         await handleFlashcards('page');
       } catch (error) {
-        console.error('[Quizzer] Auto-flashcards error:', error);
+        console.error('[LocalScholar] Auto-flashcards error:', error);
       }
     }
   } catch (error) {
-    console.error('[Quizzer] Auto-start check error:', error);
+    console.error('[LocalScholar] Auto-start check error:', error);
   }
 }
 
@@ -698,14 +731,14 @@ if (document.readyState === 'complete') {
 
 // Message listeners
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type === 'QUIZZER_CHECK_SELECTION') {
+  if (msg?.type === 'LOCALSCHOLAR_CHECK_SELECTION') {
     const selection = window.getSelection();
     const hasSelection = selection && selection.toString().trim().length > 0;
     sendResponse({ hasSelection });
     return true;
   }
 
-  if (msg?.type === 'QUIZZER_GET_TEXT') {
+  if (msg?.type === 'LOCALSCHOLAR_GET_TEXT') {
     const { source, enhanced = true } = msg;
     if (enhanced) {
       const extraction = extractContent(source);
@@ -718,11 +751,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  if (msg?.type === 'QUIZZER_CONTEXT_ACTION') {
+  if (msg?.type === 'LOCALSCHOLAR_CONTEXT_ACTION') {
     handleContextAction(msg.payload);
   }
 
-  if (msg?.type === 'QUIZZER_SHOW_DECK') {
+  if (msg?.type === 'LOCALSCHOLAR_SHOW_DECK') {
     try {
       const overlay = showResultsOverlay();
       overlay.showFlashcards(msg.deck);
@@ -734,7 +767,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  if (msg?.type === 'QUIZZER_SHOW_CONTENT') {
+  if (msg?.type === 'LOCALSCHOLAR_SHOW_CONTENT') {
     try {
       const { item, contentType } = msg;
       const overlay = showResultsOverlay();
@@ -758,4 +791,4 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-console.log('[Quizzer] Content script loaded');
+console.log('[LocalScholar] Content script loaded');

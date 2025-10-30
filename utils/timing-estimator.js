@@ -5,7 +5,7 @@
  * Stores historical data to predict future task durations.
  */
 
-const STORAGE_KEY = 'quizzer.timing_data';
+const STORAGE_KEY = 'localscholar.timing_data';
 
 // Default baseline estimates (in seconds)
 const BASELINE_TIMES = {

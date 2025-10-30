@@ -1,10 +1,10 @@
-# Accessibility Guidelines for Quizzer
+# Accessibility Guidelines for LocalScholar
 
 Last updated: 2025-10-19
 
 ## Overview
 
-Quizzer is designed to be accessible to all users, including those who rely on assistive technologies like screen readers, keyboard navigation, and alternative input devices.
+LocalScholar is designed to be accessible to all users, including those who rely on assistive technologies like screen readers, keyboard navigation, and alternative input devices.
 
 ## Implemented Accessibility Features
 

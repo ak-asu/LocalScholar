@@ -1,11 +1,23 @@
 {
   "manifest_version": 3,
-  "name": "Quizzer",
-  "description": "Summarize pages or selections, generate flashcards, and build reports locally using Chrome built-in AI.",
+  "name": "LocalScholar",
+  "description": "Privacy-first AI study assistant: summarize, create flashcards, translate, proofread, and build reports - all locally using Chrome built-in AI.",
   "version": "0.1.0",
+  "icons": {
+    "16": "logo.png",
+    "32": "logo.png",
+    "48": "logo.png",
+    "128": "logo.png"
+  },
   "action": {
-    "default_title": "Quizzer",
-    "default_popup": "popup/popup.html"
+    "default_title": "LocalScholar",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "logo.png",
+      "32": "logo.png",
+      "48": "logo.png",
+      "128": "logo.png"
+    }
   },
   "permissions": [
     "storage",

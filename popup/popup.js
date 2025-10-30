@@ -1,9 +1,10 @@
 /**
- * Quizzer Popup - Enhanced with modals, action buttons, and report generation
+ * LocalScholar Popup - Enhanced with modals, action buttons, and report generation
  */
 
 import * as storage from '../data/storage.js';
 import { processReportGeneration } from '../utils/ai-pipeline.js';
+import { getDisabledAPIs, formatAPIWarning } from '../utils/api-checker.js';
 
 // Tab switching
 const tabHistory = document.getElementById('tab-history');
@@ -42,7 +43,7 @@ const DEFAULT_SETTINGS = {
   autoFlashcards: false
 };
 
-const SETTINGS_KEY = 'quizzer.settings';
+const SETTINGS_KEY = 'localscholar.settings';
 
 // Tab switching
 function switchTab(showHistory) {
@@ -102,7 +103,7 @@ modalDownloadBtn.addEventListener('click', () => {
   if (!currentModalData) return;
 
   const { type, item } = currentModalData;
-  let filename = 'quizzer-export.txt';
+  let filename = 'localscholar-export.txt';
   let content = modalContent.textContent;
 
   if (type === 'summary') {
@@ -261,7 +262,7 @@ async function handleView(item, type) {
   try {
     // Send message to content script to show in overlay
     await chrome.tabs.sendMessage(tab.id, {
-      type: 'QUIZZER_SHOW_CONTENT',
+      type: 'LOCALSCHOLAR_SHOW_CONTENT',
       item,
       contentType: type
     });
@@ -296,7 +297,7 @@ async function handleCopy(item, type) {
 }
 
 function handleDownload(item, type) {
-  let filename = 'quizzer-export.txt';
+  let filename = 'localscholar-export.txt';
   let content = '';
 
   if (type === 'summary') {
@@ -322,10 +323,10 @@ async function handleDelete(item, type) {
 
   try {
     if (type === 'summary') {
-      const data = await chrome.storage.local.get('quizzer.summaries');
-      const summaries = data['quizzer.summaries'] || [];
+      const data = await chrome.storage.local.get('localscholar.summaries');
+      const summaries = data['localscholar.summaries'] || [];
       const filtered = summaries.filter(s => s.id !== item.id);
-      await chrome.storage.local.set({ 'quizzer.summaries': filtered });
+      await chrome.storage.local.set({ 'localscholar.summaries': filtered });
     } else if (type === 'deck') {
       await storage.deleteDeck(item.id);
     } else if (type === 'report') {
@@ -345,11 +346,11 @@ async function handleDelete(item, type) {
 // Load summaries
 async function loadSummaries() {
   const summariesList = document.getElementById('summaries-list');
-  const data = await chrome.storage.local.get('quizzer.summaries');
-  const summaries = data['quizzer.summaries'] || [];
+  const data = await chrome.storage.local.get('localscholar.summaries');
+  const summaries = data['localscholar.summaries'] || [];
 
   if (summaries.length === 0) {
-    summariesList.innerHTML = '<p class="empty-state">No summaries yet. Right-click text → Quizzer: Summarize</p>';
+    summariesList.innerHTML = '<p class="empty-state">No summaries yet. Right-click text → LocalScholar: Summarize</p>';
     return;
   }
 
@@ -383,7 +384,7 @@ async function loadDecks() {
   const decks = await storage.listDecks();
 
   if (decks.length === 0) {
-    decksList.innerHTML = '<p class="empty-state">No decks yet. Right-click text → Quizzer: Create Flashcards</p>';
+    decksList.innerHTML = '<p class="empty-state">No decks yet. Right-click text → LocalScholar: Create Flashcards</p>';
     return;
   }
 
@@ -410,7 +411,7 @@ async function loadDecks() {
 
       try {
         await chrome.tabs.sendMessage(tab.id, {
-          type: 'QUIZZER_SHOW_DECK',
+          type: 'LOCALSCHOLAR_SHOW_DECK',
           deck: deck
         });
         window.close();
@@ -580,7 +581,7 @@ document.getElementById('export-data').addEventListener('click', async () => {
     };
 
     const dataStr = JSON.stringify(exportObject, null, 2);
-    downloadFile(dataStr, `quizzer-export-${Date.now()}.json`);
+    downloadFile(dataStr, `localscholar-export-${Date.now()}.json`);
     showStatus('Data exported successfully', false);
   } catch (error) {
     console.error('Export error:', error);
@@ -664,95 +665,48 @@ async function loadAllHistory() {
 async function checkAIAPIs() {
   const apiWarning = document.getElementById('api-warning');
   const warningContent = document.getElementById('api-warning-content');
-  const missingAPIs = [];
 
-  // Check Summarizer API
   try {
-    if (!('Summarizer' in self)) {
-      console.log('[Quizzer Popup] Summarizer not in self');
-      missingAPIs.push({
-        name: 'Summarizer API',
-        feature: 'Summarization',
-        flag: 'optimization-guide-on-device-model'
-      });
+    // Get list of disabled/unavailable APIs
+    const disabledAPIs = await getDisabledAPIs();
+
+    console.log('[LocalScholar Popup] API Check Results:', {
+      total: disabledAPIs.length,
+      disabled: disabledAPIs.map(api => ({
+        name: api.name,
+        flag: api.flag,
+        reason: api.reason
+      }))
+    });
+
+    // Display warnings if any APIs are missing
+    if (disabledAPIs.length > 0) {
+      const warningHTML = formatAPIWarning(disabledAPIs);
+      warningContent.innerHTML = warningHTML;
+      apiWarning.removeAttribute('hidden');
+
+      // Add click handlers to open flags page for each flag mentioned
+      // The flags are in <code> tags, make them clickable
+      setTimeout(() => {
+        const codeElements = warningContent.querySelectorAll('code');
+        codeElements.forEach(code => {
+          code.style.cursor = 'pointer';
+          code.style.textDecoration = 'underline';
+          code.addEventListener('click', (e) => {
+            e.preventDefault();
+            const flagName = code.textContent;
+            chrome.tabs.create({
+              url: `chrome://flags/#${flagName}`
+            });
+          });
+        });
+      }, 0);
     } else {
-      const availability = await Summarizer.availability();
-      console.log('[Quizzer Popup] Summarizer availability:', availability);
-      // Availability states: 'available', 'downloadable', 'unavailable'
-      if (availability === 'unavailable') {
-        missingAPIs.push({
-          name: 'Summarizer API',
-          feature: 'Summarization',
-          flag: 'optimization-guide-on-device-model',
-          reason: 'unavailable on this device'
-        });
-      }
+      apiWarning.setAttribute('hidden', '');
     }
-  } catch (e) {
-    console.error('[Quizzer Popup] Summarizer API check error:', e);
-    // Don't add to missing list if check itself fails - might be a temporary error
-  }
-
-  // Check Prompt API (LanguageModel)
-  try {
-    if (!('ai' in self) || !self.ai?.languageModel) {
-      console.log('[Quizzer Popup] Prompt API not available in self.ai');
-      missingAPIs.push({
-        name: 'Prompt API',
-        feature: 'Flashcards & Reports',
-        flag: 'optimization-guide-on-device-model'
-      });
-    } else {
-      const capabilities = await self.ai.languageModel.capabilities();
-      console.log('[Quizzer Popup] Prompt API capabilities:', capabilities);
-      // capabilities.available states: 'readily', 'after-download', 'no'
-      if (capabilities.available === 'no') {
-        missingAPIs.push({
-          name: 'Prompt API',
-          feature: 'Flashcards & Reports',
-          flag: 'optimization-guide-on-device-model',
-          reason: 'unavailable on this device'
-        });
-      }
-    }
-  } catch (e) {
-    console.error('[Quizzer Popup] Prompt API check error:', e);
-    // Don't add to missing list if check itself fails - might be a temporary error
-  }
-
-  // Display warnings if any APIs are missing
-  if (missingAPIs.length > 0) {
-    const warningHTML = `
-      <div style="line-height: 1.5;">
-        <div style="margin-bottom: 4px;">⚠️ <strong>AI APIs Not Available</strong></div>
-        <div style="font-size: 10px; margin-bottom: 6px;">
-          ${missingAPIs.map(api =>
-            `• <strong>${api.name}</strong> (${api.feature})${api.reason ? ` - ${api.reason}` : ''}`
-          ).join('<br>')}
-        </div>
-        <div style="font-size: 10px;">
-          Enable <strong>"Optimization Guide On Device Model"</strong> at
-          <a href="#" id="enable-ai-link" style="color: inherit; font-weight: 600;">chrome://flags</a>,
-          then restart Chrome.
-        </div>
-      </div>
-    `;
-
-    warningContent.innerHTML = warningHTML;
-    apiWarning.removeAttribute('hidden');
-
-    // Add click handler to open flags page
-    const enableLink = document.getElementById('enable-ai-link');
-    if (enableLink) {
-      enableLink.addEventListener('click', (e) => {
-        e.preventDefault();
-        chrome.tabs.create({
-          url: 'chrome://flags/#optimization-guide-on-device-model'
-        });
-      });
-    }
-  } else {
-    apiWarning.setAttribute('hidden', '');
+  } catch (error) {
+    console.error('[LocalScholar Popup] API check error:', error);
+    // Don't show error to user - API check failures shouldn't block the UI
   }
 }
 

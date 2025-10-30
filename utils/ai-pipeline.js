@@ -51,7 +51,7 @@ export async function processSummarization(options) {
   }
 
   const availability = await Summarizer.availability();
-  console.log('[Quizzer] Summarizer.availability() returned:', availability);
+  console.log('[LocalScholar] Summarizer.availability() returned:', availability);
 
   // Availability states: 'available', 'downloadable', 'unavailable'
   if (availability === 'unavailable') {
@@ -112,6 +112,7 @@ async function summarizeBatch(text, options = {}) {
   const safeOutputLanguage = outputLanguage || 'en';
 
   const createOptions = {
+    expectedInputLanguages: ["en", "ja", "es"],
     type,
     length,
     format,
@@ -127,16 +128,16 @@ async function summarizeBatch(text, options = {}) {
     };
   }
 
-  console.log('[Quizzer] Summarizer.create() called with batch mode:', createOptions);
+  console.log('[LocalScholar] Summarizer.create() called with batch mode:', createOptions);
 
   const summarizer = await Summarizer.create(createOptions);
 
   try {
-    console.log('[Quizzer] Starting batch summarization, text length:', text.length);
+    console.log('[LocalScholar] Starting batch summarization, text length:', text.length);
 
     const result = await summarizer.summarize(text);
 
-    console.log('[Quizzer] Batch summarization complete, result length:', result.length);
+    console.log('[LocalScholar] Batch summarization complete, result length:', result.length);
     return result;
   } finally {
     if (summarizer.destroy) {
@@ -226,6 +227,9 @@ async function generateFlashcardsFromText(text, options) {
         role: 'system',
         content: 'You are a skilled educator. Generate high-quality multiple-choice questions (MCQ) from the provided text in valid JSON format.'
       }
+    ],
+    expectedOutputs: [
+      { type: "text", languages: [outputLanguage] }
     ]
   });
 
@@ -277,7 +281,7 @@ ${text}`;
       omitResponseConstraintInput: true  // Don't count schema towards quota
     });
 
-    console.log('[Quizzer] Raw flashcard response:', result);
+    console.log('[LocalScholar] Raw flashcard response:', result);
 
     // Parse the JSON response - handle markdown code blocks
     let flashcards = [];
@@ -312,7 +316,7 @@ ${text}`;
     // Validate and fix answer indices if needed (convert 1-4 to 0-3)
     flashcards = flashcards.map((card, idx) => {
       if (card.answer > 3) {
-        console.warn(`[Quizzer] Card ${idx + 1}: Converting answer from ${card.answer} to ${card.answer - 1} (1-indexed to 0-indexed)`);
+        console.warn(`[LocalScholar] Card ${idx + 1}: Converting answer from ${card.answer} to ${card.answer - 1} (1-indexed to 0-indexed)`);
         card.answer = card.answer - 1;
       }
       return card;
@@ -417,6 +421,9 @@ export async function processReportGeneration(options) {
         role: 'system',
         content: 'You are a skilled technical writer. Create comprehensive, well-structured reports that synthesize information from multiple sources.'
       }
+    ],
+    expectedOutputs: [
+      { type: "text", languages: [outputLanguage] }
     ]
   });
 

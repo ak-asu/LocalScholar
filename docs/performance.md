@@ -4,7 +4,7 @@ Last updated: 2025-10-19
 
 ## Overview
 
-This document outlines the performance optimizations implemented in Quizzer and best practices for maintaining optimal performance.
+This document outlines the performance optimizations implemented in LocalScholar and best practices for maintaining optimal performance.
 
 ## Implemented Optimizations
 
@@ -51,7 +51,7 @@ const cached = await getCachedItem(key);
 - Cache: Unlimited, but respects expiration
 
 **Storage Keys Namespacing**
-- All storage keys prefixed with `quizzer.`
+- All storage keys prefixed with `localscholar.`
 - Prevents conflicts with other extensions
 - Easy to export/import all data
 
@@ -149,13 +149,13 @@ const text = document.body.innerText;
 ```javascript
 // ✅ Good: Batch storage operations
 await chrome.storage.local.set({
-  'quizzer.decks': decks,
-  'quizzer.settings': settings
+  'localscholar.decks': decks,
+  'localscholar.settings': settings
 });
 
 // ❌ Bad: Multiple separate writes
-await chrome.storage.local.set({ 'quizzer.decks': decks });
-await chrome.storage.local.set({ 'quizzer.settings': settings });
+await chrome.storage.local.set({ 'localscholar.decks': decks });
+await chrome.storage.local.set({ 'localscholar.settings': settings });
 ```
 
 ### Cache Checks

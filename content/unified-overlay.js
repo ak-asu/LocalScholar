@@ -26,7 +26,7 @@ function ensureShadowContainer() {
   }
 
   shadowContainer = document.createElement('div');
-  shadowContainer.id = 'quizzer-overlay-container';
+  shadowContainer.id = 'localscholar-overlay-container';
   shadowContainer.style.cssText = `
     position: fixed;
     top: 0;
