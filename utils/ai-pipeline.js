@@ -72,12 +72,12 @@ export async function processSummarization(options) {
   const availability = await Summarizer.availability();
   console.log('[Quizzer] Summarizer.availability() returned:', availability);
 
-  // Availability states: 'readily', 'after-download', 'no'
-  if (availability === 'no') {
+  // Availability states: 'available', 'downloadable', 'unavailable'
+  if (availability === 'unavailable') {
     throw new Error('Summarizer unavailable on this device');
   }
 
-  if (availability === 'after-download') {
+  if (availability === 'downloadable') {
     onProgress('Summarizer model will download on first use...', 12);
   }
 
@@ -195,19 +195,47 @@ async function summarizeChunk(text, options = {}) {
   }
 
   console.log('[Quizzer] Summarizer.create() called with:', createOptions);
+  console.log('[Quizzer] outputLanguage value:', safeOutputLanguage, 'type:', typeof safeOutputLanguage);
+
   const summarizer = await Summarizer.create(createOptions);
 
   try {
+    console.log('[Quizzer] Starting summarization with text length:', text.length);
+
     // Use streaming for better UX
+    // Second parameter is an options object with optional 'context' field
     const stream = summarizer.summarizeStreaming(text, {
-      context: 'Audience: general web reader.'
+      context: 'This article is intended for a general web audience.'
     });
 
     let result = '';
+    let chunkCount = 0;
+    let longestChunk = '';
+
     for await (const chunk of stream) {
-      result = chunk; // Each chunk contains the accumulated text
+      chunkCount++;
+
+      // Keep track of the longest chunk (which should be the accumulated text)
+      if (chunk.length > longestChunk.length) {
+        longestChunk = chunk;
+      }
+
+      // Log every 20th chunk and the last few
+      if (chunkCount % 20 === 0 || chunkCount > 105) {
+        console.log(`[Quizzer] Chunk ${chunkCount}, length: ${chunk.length}, content: "${chunk.substring(0, 50)}..."`);
+      }
+
+      result = chunk; // Each chunk should contain the full accumulated text
     }
 
+    // If final chunk is empty but we have a longer one, use it
+    if (result.length === 0 && longestChunk.length > 0) {
+      console.warn('[Quizzer] Final chunk was empty, using longest chunk instead');
+      result = longestChunk;
+    }
+
+    console.log('[Quizzer] Summarization complete, total chunks:', chunkCount, 'final length:', result.length);
+    console.log('[Quizzer] Final summary preview:', result.substring(0, 100));
     return result;
   } finally {
     // Clean up
@@ -300,19 +328,16 @@ export async function processFlashcardGeneration(options) {
   onProgress('Preparing flashcard generation...', 10);
 
   // Check Prompt API (LanguageModel) availability - per Chrome AI documentation
-  if (!('ai' in self) || !self.ai?.languageModel) {
+  if (!('LanguageModel' in self)) {
     throw new Error('Prompt API not available. Enable "Optimization Guide On Device Model" in chrome://flags and restart Chrome');
   }
 
-  const capabilities = await self.ai.languageModel.capabilities();
-  if (capabilities.available === 'no') {
+  const availability = await LanguageModel.availability();
+  if (availability !== 'available') {
     throw new Error('Language Model unavailable on this device');
   }
 
-  // Inform about download if needed
-  if (capabilities.available === 'after-download') {
-    onProgress('Language Model will download on first use...', 15);
-  }
+  onProgress('Language Model ready...', 15);
 
   const { chunks, metadata } = extraction;
 
@@ -376,11 +401,16 @@ async function generateFlashcardsFromChunk(text, options) {
     outputLanguage = 'en'
   } = options;
 
-  // Create session with LanguageModel API (self.ai per documentation)
-  const session = await self.ai.languageModel.create({
+  // Create session with LanguageModel API
+  const session = await LanguageModel.create({
     temperature: 0.7,
     topK: 40,
-    systemPrompt: 'You are a skilled educator. Generate high-quality multiple-choice questions (MCQ) from the provided text in valid JSON format.'
+    initialPrompts: [
+      {
+        role: 'system',
+        content: 'You are a skilled educator. Generate high-quality multiple-choice questions (MCQ) from the provided text in valid JSON format.'
+      }
+    ]
   });
 
   try {
@@ -401,25 +431,76 @@ Requirements:
 - Provide a brief explanation for the correct answer
 - Ensure questions are clear and unambiguous
 
+IMPORTANT: The "answer" field must be an index from 0 to 3 (0=first option, 1=second, 2=third, 3=fourth).
+
 Text:
 ${text}`;
 
-    const result = await session.prompt(prompt);
+    // Define JSON schema for structured output
+    const schema = {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          question: { type: "string" },
+          options: {
+            type: "array",
+            items: { type: "string" },
+            minItems: 4,
+            maxItems: 4
+          },
+          answer: { type: "integer", minimum: 0, maximum: 3 },
+          explanation: { type: "string" }
+        },
+        required: ["question", "options", "answer", "explanation"]
+      }
+    };
 
-    // Parse the JSON response
+    const result = await session.prompt(prompt, {
+      responseConstraint: schema,
+      omitResponseConstraintInput: true  // Don't count schema towards quota
+    });
+
+    console.log('[Quizzer] Raw flashcard response:', result);
+
+    // Parse the JSON response - handle markdown code blocks
     let flashcards = [];
     try {
+      // Try direct parse first
       flashcards = JSON.parse(result);
     } catch (parseError) {
       console.error('Failed to parse flashcard JSON:', parseError);
-      // Try to extract JSON from the response
-      const jsonMatch = result.match(/\[[\s\S]*\]/);
+
+      // Try to extract JSON from markdown code blocks
+      let cleaned = result.trim();
+
+      // Remove markdown code block markers
+      cleaned = cleaned.replace(/^```json\s*/i, '').replace(/^```\s*/, '');
+      cleaned = cleaned.replace(/\s*```$/, '');
+      cleaned = cleaned.trim();
+
+      // Try to find JSON array
+      const jsonMatch = cleaned.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
-        flashcards = JSON.parse(jsonMatch[0]);
+        try {
+          flashcards = JSON.parse(jsonMatch[0]);
+        } catch (e) {
+          console.error('Failed to parse extracted JSON:', e);
+          throw new Error('Failed to generate valid flashcards - invalid JSON format');
+        }
       } else {
-        throw new Error('Failed to generate valid flashcards');
+        throw new Error('Failed to generate valid flashcards - no JSON array found');
       }
     }
+
+    // Validate and fix answer indices if needed (convert 1-4 to 0-3)
+    flashcards = flashcards.map((card, idx) => {
+      if (card.answer > 3) {
+        console.warn(`[Quizzer] Card ${idx + 1}: Converting answer from ${card.answer} to ${card.answer - 1} (1-indexed to 0-indexed)`);
+        card.answer = card.answer - 1;
+      }
+      return card;
+    });
 
     return flashcards;
   } finally {
@@ -458,7 +539,7 @@ export async function processReportGeneration(options) {
   }
 
   const availability = await LanguageModel.availability();
-  if (availability === 'unavailable') {
+  if (availability !== 'available') {
     throw new Error('Language Model unavailable on this device');
   }
 
@@ -507,15 +588,20 @@ export async function processReportGeneration(options) {
   onProgress('Synthesizing report...', 55);
 
   // Check Prompt API (LanguageModel) availability
-  if (!('ai' in self) || !self.ai?.languageModel) {
+  if (!('LanguageModel' in self)) {
     throw new Error('Prompt API not available for report generation. Enable it in chrome://flags');
   }
 
   // Create the report by synthesizing all sources
-  const session = await self.ai.languageModel.create({
+  const session = await LanguageModel.create({
     temperature: 0.7,
     topK: 40,
-    systemPrompt: 'You are a skilled technical writer. Create comprehensive, well-structured reports that synthesize information from multiple sources.'
+    initialPrompts: [
+      {
+        role: 'system',
+        content: 'You are a skilled technical writer. Create comprehensive, well-structured reports that synthesize information from multiple sources.'
+      }
+    ]
   });
 
   try {

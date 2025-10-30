@@ -332,24 +332,24 @@ async function handleTranslate() {
 
   try {
     // Check Translator API availability
-    if (!('translation' in self)) {
+    if (!('Translator' in self)) {
       throw new Error('Translation API not available. Enable "Translation API" in chrome://flags and restart Chrome');
     }
 
     // Check if translation is available for this language pair
-    const canTranslate = await translation.canTranslate({
+    const availability = await Translator.availability({
       sourceLanguage: 'en', // Auto-detect would be ideal but we'll use English as default
       targetLanguage: targetLang
     });
 
-    console.log('[Quizzer] Translation availability:', canTranslate);
+    console.log('[Quizzer] Translation availability:', availability);
 
-    if (canTranslate === 'no') {
+    if (availability !== 'available') {
       throw new Error(`Translation to ${targetLang} is not available on this device`);
     }
 
     // Create translator
-    const translator = await translation.createTranslator({
+    const translator = await Translator.create({
       sourceLanguage: 'en',
       targetLanguage: targetLang
     });

@@ -368,20 +368,34 @@ class UnifiedOverlay {
             <div style="font-weight: 600; margin-bottom: 12px; font-size: 15px;">
               ${this.escapeHtml(card.question)}
             </div>
-            <div style="display: grid; gap: 8px;">
+            <div id="qz-options" style="display: grid; gap: 8px;">
               ${card.options.map((opt, i) => `
-                <div style="padding: 10px 12px; background: rgba(128,128,128,0.1); border-radius: 6px; font-size: 13px;">
+                <button
+                  class="qz-option"
+                  data-index="${i}"
+                  style="
+                    padding: 10px 12px;
+                    background: rgba(128,128,128,0.1);
+                    border: 2px solid transparent;
+                    border-radius: 6px;
+                    font-size: 13px;
+                    text-align: left;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                    font-family: inherit;
+                  "
+                  onmouseover="this.style.background='rgba(128,128,128,0.2)'"
+                  onmouseout="if(!this.disabled) this.style.background='rgba(128,128,128,0.1)'"
+                >
                   <strong>${String.fromCharCode(65 + i)}.</strong> ${this.escapeHtml(opt)}
-                </div>
+                </button>
               `).join('')}
             </div>
-            <button id="qz-reveal" class="qz-btn secondary" style="margin-top: 12px; width: 100%;">
-              Show Answer
-            </button>
+            <div id="qz-feedback" style="display:none; padding: 12px; border-radius: 6px; margin-top: 12px;"></div>
           </div>
           <div id="qz-explanation" style="display:none; padding: 12px; background: rgba(52,168,83,0.1); border-radius: 6px; margin-top: 12px;">
             <div style="font-weight: 600; margin-bottom: 4px; color: #34a853;">
-              ✓ Answer: ${String.fromCharCode(65 + card.correctIndex)}
+              ✓ Correct Answer: ${String.fromCharCode(65 + card.answer)}
             </div>
             <div style="font-size: 13px; line-height: 1.6;">
               ${this.escapeHtml(card.explanation || '')}
@@ -399,14 +413,56 @@ class UnifiedOverlay {
       `;
 
       // Setup event listeners
-      const revealBtn = this.shadow.getElementById('qz-reveal');
+
+      // Option click handlers
+      const optionButtons = this.shadow.querySelectorAll('.qz-option');
+      const feedbackDiv = this.shadow.getElementById('qz-feedback');
       const explanationDiv = this.shadow.getElementById('qz-explanation');
-      if (revealBtn && explanationDiv) {
-        revealBtn.addEventListener('click', () => {
-          explanationDiv.style.display = explanationDiv.style.display === 'none' ? 'block' : 'none';
-          revealBtn.textContent = explanationDiv.style.display === 'none' ? 'Show Answer' : 'Hide Answer';
+
+      let answered = false;
+
+      optionButtons.forEach((btn, index) => {
+        btn.addEventListener('click', () => {
+          if (answered) return; // Already answered
+
+          answered = true;
+          const selectedIndex = parseInt(btn.getAttribute('data-index'));
+          const isCorrect = selectedIndex === card.answer;
+
+          // Disable all options
+          optionButtons.forEach(opt => opt.disabled = true);
+
+          // Color the selected option
+          if (isCorrect) {
+            btn.style.background = 'rgba(52,168,83,0.2)';
+            btn.style.borderColor = '#34a853';
+            btn.style.color = '#34a853';
+          } else {
+            btn.style.background = 'rgba(217,48,37,0.2)';
+            btn.style.borderColor = '#d93025';
+            btn.style.color = '#d93025';
+
+            // Also highlight the correct answer
+            optionButtons[card.answer].style.background = 'rgba(52,168,83,0.2)';
+            optionButtons[card.answer].style.borderColor = '#34a853';
+            optionButtons[card.answer].style.color = '#34a853';
+          }
+
+          // Show feedback
+          if (feedbackDiv) {
+            feedbackDiv.style.display = 'block';
+            feedbackDiv.innerHTML = isCorrect
+              ? '<div style="color: #34a853; font-weight: 600;">✓ Correct!</div>'
+              : '<div style="color: #d93025; font-weight: 600;">✗ Incorrect</div>';
+            feedbackDiv.style.background = isCorrect ? 'rgba(52,168,83,0.1)' : 'rgba(217,48,37,0.1)';
+          }
+
+          // Show explanation automatically after answering
+          if (explanationDiv) {
+            explanationDiv.style.display = 'block';
+          }
         });
-      }
+      });
 
       const prevBtn = this.shadow.getElementById('qz-prev');
       const nextBtn = this.shadow.getElementById('qz-next');

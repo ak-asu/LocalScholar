@@ -1,27 +1,36 @@
 # Architecture
 
-Last updated: 2025-10-18
+Last updated: 2025-01-29
 
 ## Overview
-Manifest V3 extension, keeping AI execution in document contexts (popup, options, content script, optional offscreen) and using the service worker for routing and menus only.
+Manifest V3 extension, keeping AI execution in document contexts (popup, content script) and using the service worker for routing and menus only. Supports 6 context menu actions with 3 different processing patterns: history-saved (summaries, flashcards, reports) and overlay-only (translation, proofreading, rewriting).
 
 ## Components
 - Service worker (background)
-  - Creates context menus
-  - Routes messages to active tab content script or opens popup
+  - Creates 6 context menu items (Summarize, Flashcards, Add to Queue, Translate, Proofread, Rewrite)
+  - Routes messages to active tab content script
   - No AI calls here
 - Popup page
   - Main UI to run summaries, flashcards, and reports
+  - Unified settings panel (no separate options page)
+  - Custom instructions textarea for report generation
   - Runs AI APIs with user activation and streaming
-- Options page
-  - Settings UI
-  - May run small AI tasks (e.g., test style) but optional
+  - Translation, Rewriter, and Proofreader settings
 - Content script
-  - Extracts text (selection/full-page)
-  - Injects overlay (shadow DOM) for flashcards
-  - Can run AI APIs when launched from user action
-- Offscreen document (optional)
-  - Background DOM-capable page for long tasks if popup closed
+  - Extracts text (selection/full-page) with smart cleanup
+  - Handles 6 context menu actions
+  - Injects unified overlay (shadow DOM) for all results
+  - Runs AI APIs when launched from user action
+  - Translation, Proofreading, and Rewriting processed in content script context
+  - Results displayed in overlay without saving to history
+- Task management system
+  - Centralized task tracking with status and progress
+  - Duplicate prevention via content hashing
+  - Automatic cleanup of completed tasks
+- Progress overlay system
+  - Draggable, cancellable progress indicators
+  - Time estimation with learning algorithm
+  - Multiple concurrent tasks supported
 
 ## Data flow and messaging
 - User clicks popup or context menu
@@ -33,9 +42,12 @@ Manifest V3 extension, keeping AI execution in document contexts (popup, options
 - Overlay renders flashcards on page via content script
 
 ## AI placement
-- Summarizer API: popup/content script
-- Prompt API: popup/content script for MCQ/report
-- Writer/Rewriter/Proofreader/Translator: optional, feature-detected, behind origin trial tokens where required
+- Summarizer API: popup/content script (for summaries, multi-chunk processing)
+- Prompt API (LanguageModel): popup/content script for MCQ/report generation
+- Translator API: content script only (for selected text translation)
+- Proofreader API: content script only (for selected text proofreading, requires origin trial)
+- Rewriter API: content script only (for selected text rewriting, requires origin trial)
+- Writer API: not currently used (reserved for future features)
 
 ## Permissions Policy
 - These APIs are not usable in workers; keep calls in document contexts
@@ -123,24 +135,35 @@ Manifest V3 extension, keeping AI execution in document contexts (popup, options
 ## Files layout (actual implementation)
 
 ### Core Files
-- `manifest.json` - Extension configuration (MV3)
-- `background/service-worker.js` - Context menus and message routing
-- `popup/popup.html`, `popup.js`, `popup.css` - Main UI
-- `content/content.js` - Text extraction and overlay
-- `utils/content-extractor.js` - ✅ Content extraction, cleanup, chunking
-- `utils/ai-pipeline.js` - ✅ AI processing coordination
+- `manifest.json` - Extension configuration (MV3, ES module support)
+- `background/service-worker.js` - 6 context menu items and message routing
+- `popup/popup.html` - Main UI with unified settings, custom instructions textarea
+- `popup/popup.js` - Popup logic, report generation, settings management
+- `popup/popup.css` - Popup styles with modal dialogs
+- `content/content.js` - Main content script with 6 action handlers
+- `content/content-loader.js` - Module loader for content script
+- `content/task-manager.js` - Task tracking and duplicate prevention
+- `content/unified-overlay.js` - Unified overlay for all results (progress + display)
+- `utils/content-extractor.js` - Content extraction, cleanup, chunking (reference)
+- `utils/ai-pipeline.js` - AI processing coordination (summaries, flashcards, reports)
+- `utils/timing-estimator.js` - Learning time estimation system
+- `data/storage.js` - Storage management with caching
 
 ### Current Status
-- ✅ Basic summarization working (Summarizer API)
-- ✅ Enhanced content extraction implemented
+- ✅ Complete summarization with Summarizer API
+- ✅ Enhanced content extraction with smart cleanup
 - ✅ Multi-chunk processing with summary-of-summaries
-- ✅ Translation support (Translator API)
-- ✅ Error handling and fallbacks
-- ⏳ Flashcard generation (Prompt API) - module ready, UI pending
-- ⏳ Report synthesis - planned
-- ⏳ Options page - planned
-- ⏳ Offscreen document - planned
-- ⏳ Storage/IndexedDB - planned
+- ✅ Flashcard generation and playable overlay (Prompt API)
+- ✅ Report queue and synthesis with custom instructions
+- ✅ Translation for selected text (Translator API, overlay-only)
+- ✅ Proofreading for selected text (Proofreader API, overlay-only)
+- ✅ Rewriting for selected text (Rewriter API, overlay-only)
+- ✅ Unified settings in popup (no separate options page)
+- ✅ Task management with duplicate prevention
+- ✅ Progress overlays with time estimation
+- ✅ Modal dialogs (no alerts)
+- ✅ Data export/import functionality
+- ✅ Chrome.storage.local for all persistence
 
 ## Alternatives considered
 - Side panel instead of popup (defer for simplicity)

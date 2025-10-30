@@ -681,8 +681,8 @@ async function checkAIAPIs() {
     } else {
       const availability = await Summarizer.availability();
       console.log('[Quizzer Popup] Summarizer availability:', availability);
-      // Availability states: 'readily', 'after-download', 'no' (NOT 'available', 'downloadable', etc)
-      if (availability === 'no') {
+      // Availability states: 'available', 'downloadable', 'unavailable'
+      if (availability === 'unavailable') {
         missingAPIs.push({
           name: 'Summarizer API',
           feature: 'Summarization',

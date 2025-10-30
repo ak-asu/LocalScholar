@@ -31,7 +31,14 @@ This document provides comprehensive testing procedures for all Quizzer extensio
 
 ### Test 1.1: Context Menu Visibility
 - **Action:** Right-click on any webpage
-- **Expected:** See "Quizzer: Summarize", "Quizzer: Create Flashcards", "Quizzer: Add to Report Queue", "Quizzer: Write Report"
+- **Expected:** See 6 context menu items:
+  1. "Quizzer: Summarize"
+  2. "Quizzer: Create Flashcards"
+  3. "Quizzer: Add to Report Queue"
+  4. "Quizzer: Translate Selection"
+  5. "Quizzer: Proofread Selection"
+  6. "Quizzer: Rewrite Selection"
+- **Note:** Items 4-6 only visible when text is selected
 - **Status:** ✅ / ❌
 
 ### Test 1.2: Summarize - Selection
@@ -90,6 +97,47 @@ This document provides comprehensive testing procedures for all Quizzer extensio
   - Extracts main content
   - Adds to queue
   - No duplicates if added again
+- **Status:** ✅ / ❌
+
+### Test 1.8: Translate Selection
+- **Setup:** Select English text (1-2 paragraphs)
+- **Action:** Right-click → Quizzer: Translate Selection
+- **Expected:**
+  - Shows progress briefly
+  - Overlay displays with two sections:
+    - ORIGINAL: Shows selected text
+    - TRANSLATED: Shows translated text in target language
+  - Uses target language from settings (default: Spanish)
+  - No history item created in popup
+  - Overlay is draggable and closable
+- **Status:** ✅ / ❌
+
+### Test 1.9: Proofread Selection
+- **Setup:** Select text with intentional grammar/spelling errors
+- **Action:** Right-click → Quizzer: Proofread Selection
+- **Expected:**
+  - Shows progress briefly
+  - Overlay displays three sections:
+    - ORIGINAL TEXT: Shows selected text
+    - CORRECTED TEXT: Shows corrected version (or "✓ NO ERRORS FOUND")
+    - CORRECTIONS: List of detected errors with explanations
+  - Each correction shows error location, type, and explanation
+  - No history item created in popup
+  - Requires Chrome 141+ and origin trial enrollment
+- **Status:** ✅ / ❌
+
+### Test 1.10: Rewrite Selection
+- **Setup:** Select text to rewrite, configure rewriter settings in popup
+- **Action:** Right-click → Quizzer: Rewrite Selection
+- **Expected:**
+  - Shows progress briefly
+  - Overlay displays two sections:
+    - ORIGINAL: Shows selected text
+    - REWRITTEN: Shows rewritten version
+  - Shows settings used (tone/length/format) at bottom
+  - Respects configured settings from popup
+  - No history item created in popup
+  - Requires Chrome 137+ and origin trial enrollment
 - **Status:** ✅ / ❌
 
 ---
@@ -243,8 +291,8 @@ This document provides comprehensive testing procedures for all Quizzer extensio
 
 ## 5. Report Generation Tests
 
-### Test 5.1: Generate Report from Queue
-- **Setup:** Add 3-5 items to queue
+### Test 5.1: Generate Report from Queue (Without Custom Instructions)
+- **Setup:** Add 3-5 items to queue, leave custom instructions textarea empty
 - **Action:** Click "Generate Report from Queue"
 - **Expected:**
   - Button shows "Generating... X%"
@@ -253,6 +301,18 @@ This document provides comprehensive testing procedures for all Quizzer extensio
   - References section at end with URLs
   - Modal opens automatically to view
   - Prompt to clear queue
+- **Status:** ✅ / ❌
+
+### Test 5.1b: Generate Report with Custom Instructions
+- **Setup:** Add 3-5 items to queue
+- **Action:**
+  1. Enter custom instructions in textarea (e.g., "Focus on key findings, use bullet points")
+  2. Click "Generate Report from Queue"
+- **Expected:**
+  - Report generation respects custom instructions
+  - Report style/format follows instructions
+  - Custom instructions influence content organization
+  - References section still appended at end
 - **Status:** ✅ / ❌
 
 ### Test 5.2: Report References Section
@@ -356,11 +416,49 @@ This document provides comprehensive testing procedures for all Quizzer extensio
   - No overlay shown
 - **Status:** ✅ / ❌
 
-### Test 7.6: Settings Persistence
-- **Setup:** Change all settings
+### Test 7.6: Translation Settings
+- **Setup:** Change translation target language to "French"
+- **Action:** Select text, right-click → Translate Selection
+- **Expected:**
+  - Translates to French (not default Spanish)
+  - Overlay shows "TRANSLATED (FR)" header
+  - Setting persists across sessions
+- **Status:** ✅ / ❌
+
+### Test 7.7: Rewriter Settings - Tone
+- **Setup:** Set rewriter tone to "More Formal"
+- **Action:** Select casual text, right-click → Rewrite Selection
+- **Expected:**
+  - Rewritten text is more formal
+  - Overlay shows "Tone: more-formal" at bottom
+  - Different from "More Casual" setting
+- **Status:** ✅ / ❌
+
+### Test 7.8: Rewriter Settings - Length
+- **Setup:** Set rewriter length to "Shorter"
+- **Action:** Select long text, right-click → Rewrite Selection
+- **Expected:**
+  - Rewritten text is shorter/more concise
+  - Overlay shows "Length: shorter"
+  - Different from "Longer" setting
+- **Status:** ✅ / ❌
+
+### Test 7.9: Rewriter Settings - Format
+- **Setup:** Set rewriter format to "Markdown"
+- **Action:** Select plain text, right-click → Rewrite Selection
+- **Expected:**
+  - Rewritten text uses markdown formatting
+  - Overlay shows "Format: markdown"
+  - Includes headings, lists, emphasis as appropriate
+- **Status:** ✅ / ❌
+
+### Test 7.10: Settings Persistence
+- **Setup:** Change all settings (including new Translation and Rewriter settings)
 - **Action:** Close popup, reopen
 - **Expected:**
   - All settings retained
+  - Translation target language persists
+  - Rewriter tone/length/format persists
   - Auto-save worked
 - **Status:** ✅ / ❌
 

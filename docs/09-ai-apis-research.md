@@ -67,37 +67,62 @@ This document provides detailed technical specifications for Chrome's built-in A
 ## Prompt API (LanguageModel)
 
 **Status:** Stable in Chrome 138+
-**Namespace:** `self.ai.languageModel` (NOT `LanguageModel` or `window.ai`)
+**Namespace:** `LanguageModel` (global object, NOT `self.ai.languageModel` or `window.ai`)
 **Model:** Gemini Nano
+
+### Feature Detection
+
+```javascript
+if ('LanguageModel' in self) {
+  // API is supported
+}
+```
 
 ### Availability States
 
 ```javascript
 // Correct pattern
-const capabilities = await self.ai.languageModel.capabilities();
-// capabilities.available returns: 'readily', 'after-download', or 'no'
+const availability = await LanguageModel.availability();
+// Returns: 'available' (ready to use)
 ```
 
-**States:**
-- `readily`: Model ready for immediate use
-- `after-download`: Model will download on first use
-- `no`: Model unavailable on this device
+**Note:** Unlike other APIs, LanguageModel.availability() returns string 'available' when ready.
+
+### Parameters Query
+
+```javascript
+const params = await LanguageModel.params();
+// Returns: { defaultTopK, maxTopK, defaultTemperature, maxTemperature }
+```
 
 ### Create Session
 
 ```javascript
-const session = await self.ai.languageModel.create({
-  temperature: 0.7,              // 0-2, controls randomness (default: max 2)
-  topK: 40,                      // 1-128, token selection diversity (default: 3)
-  systemPrompt: 'You are...',    // Optional system prompt
+const session = await LanguageModel.create({
+  temperature: 0.7,              // 0-2, controls randomness (default varies)
+  topK: 40,                      // 1-maxTopK, token selection diversity (default: defaultTopK)
+  signal: abortSignal,           // Optional AbortSignal for cancellation
   initialPrompts: [              // Optional conversation history
     {role: 'system', content: 'Context'},
     {role: 'user', content: 'Question'},
     {role: 'assistant', content: 'Answer'}
   ],
-  signal: abortSignal            // Optional AbortSignal
+  expectedInputs: [              // Optional: specify modalities and languages
+    { type: 'text', languages: ['en', 'ja', 'es'] }
+  ],
+  expectedOutputs: [             // Optional: specify output types and languages
+    { type: 'text', languages: ['en', 'ja', 'es'] }
+  ]
 });
 ```
+
+**Session Options:**
+- `temperature`: Controls randomness (higher = more creative)
+- `topK`: Limits token diversity (lower = more focused)
+- `signal`: AbortSignal for cancellation
+- `initialPrompts`: Pre-populate conversation context
+- `expectedInputs`: Specify modalities (text, image, audio) and languages
+- `expectedOutputs`: Specify output types and supported languages
 
 ### Prompting Methods
 
@@ -114,6 +139,15 @@ for await (const chunk of stream) {
 }
 ```
 
+**With Options:**
+```javascript
+const result = await session.prompt(message, {
+  signal: abortSignal,              // Stop execution
+  responseConstraint: JSONSchema,   // Constrain output format
+  omitResponseConstraintInput: true // Exclude schema from quota calculation
+});
+```
+
 ### Structured Output (JSON Schema)
 
 ```javascript
@@ -128,8 +162,32 @@ const schema = {
 
 const result = await session.prompt(
   'Is this about pottery?',
-  { responseConstraint: schema }
+  {
+    responseConstraint: schema,
+    omitResponseConstraintInput: true  // Recommended for efficiency
+  }
 );
+```
+
+### Advanced Features
+
+**Append Context:**
+```javascript
+// Add contextual prompts after session creation
+await session.append([
+  { role: 'user', content: 'Additional context' },
+  { role: 'assistant', content: 'Understood', prefix: true }  // prefix prefills response
+]);
+```
+
+**Response Prefix:**
+```javascript
+// Prefill assistant response formatting
+const prompts = [
+  { role: 'user', content: 'List three colors:' },
+  { role: 'assistant', content: '1.', prefix: true }  // Guides formatting
+];
+const session = await LanguageModel.create({ initialPrompts: prompts });
 ```
 
 ### Session Management
@@ -138,12 +196,14 @@ const result = await session.prompt(
 // Check token usage
 console.log(session.inputUsage, session.inputQuota);
 
-// Clone session (preserves resources, resets context)
-const newSession = await session.clone();
+// Clone session (preserves initial prompts, resets context, efficient)
+const newSession = await session.clone({ signal: newAbortSignal });
 
-// Destroy session
+// Destroy session (frees resources, session becomes unusable)
 session.destroy();
 ```
+
+**Important:** Always destroy sessions when done to free resources. Cloning is more efficient than creating new sessions for the same task.
 
 ### Supported Languages
 
@@ -162,16 +222,21 @@ session.destroy();
 **Status:** Stable in Chrome 138+
 **Namespace:** `Summarizer` (global object)
 
-### Availability States
+### Feature Detection & Availability
 
 ```javascript
-if (!('Summarizer' in self)) {
-  throw new Error('Summarizer not supported');
+if ('Summarizer' in self) {
+  // API is supported
 }
 
 const availability = await Summarizer.availability();
-// Returns: 'readily', 'after-download', or 'no'
+// Returns: 'available', 'downloadable', or 'unavailable'
 ```
+
+**Availability States:**
+- `'available'`: Model is ready for immediate use
+- `'downloadable'`: Model will download on first use
+- `'unavailable'`: Model not supported on this device
 
 ### Create Summarizer
 
@@ -346,29 +411,35 @@ for await (const chunk of stream) {
 ## Translator API
 
 **Status:** Stable in Chrome 138+
-**Namespace:** `self.translation` (NOT `Translator`)
+**Namespace:** `Translator` (global object, NOT `self.translation`)
+
+### Feature Detection
+
+```javascript
+if ('Translator' in self) {
+  // API is supported
+}
+```
 
 ### Availability Check
 
 ```javascript
-if (!('translation' in self)) {
-  throw new Error('Translation API not available');
-}
-
-const canTranslate = await translation.canTranslate({
-  sourceLanguage: 'en',
-  targetLanguage: 'es'
+const capabilities = await Translator.availability({
+  sourceLanguage: 'es',        // BCP 47 language code
+  targetLanguage: 'fr'         // BCP 47 language code
 });
-// Returns: 'readily', 'after-download', or 'no'
+// Returns: 'available' (hides download status for privacy)
 ```
+
+**Privacy Note:** The API deliberately hides download status of specific language pairs to protect user privacy. It returns 'available' when a translation is possible.
 
 ### Create Translator
 
 ```javascript
-const translator = await translation.createTranslator({
-  sourceLanguage: 'en',         // BCP 47 language code
+const translator = await Translator.create({
+  sourceLanguage: 'en',         // BCP 47 language code (e.g., 'en', 'es', 'fr')
   targetLanguage: 'es',         // BCP 47 language code
-  monitor(m) {
+  monitor(m) {                  // Optional download progress monitor
     m.addEventListener('downloadprogress', (e) => {
       console.log(`Downloaded ${e.loaded * 100}%`);
     });
@@ -378,29 +449,41 @@ const translator = await translation.createTranslator({
 
 ### Translation Methods
 
-**Batch:**
+**Batch (standard):**
 ```javascript
-const translated = await translator.translate('Hello world');
+const translated = await translator.translate('Where is the next bus stop, please?');
+// Returns: "Où est le prochain arrêt de bus, s'il vous plaît ?"
 ```
 
-**Streaming:**
+**Streaming (for longer content):**
 ```javascript
 const stream = translator.translateStreaming(longText);
 for await (const chunk of stream) {
-  console.log(chunk);
+  console.log(chunk);  // Progressive translation output
 }
 ```
+
+### Important Limitations
+
+**Sequential Processing:** Translations are processed sequentially. If you send large amounts of text, subsequent translations are blocked until earlier ones complete.
+
+**Best Practice for Large Text:**
+- Implement chunking with loading interfaces
+- Inform users about processing time
+- Consider using streaming for better UX
 
 ### Language Codes
 
 Use BCP 47 short codes: `'en'`, `'es'`, `'fr'`, `'de'`, `'ja'`, `'zh'`, `'ko'`, `'it'`, `'pt'`, `'ru'`, etc.
 
-### Extension Usage
+### Extension Usage Recommendations
 
-- Always check `canTranslate()` before creating translator
-- User activation required before first `createTranslator()`
-- Models download per language pair
+- Always check `Translator.availability()` before creating translator
+- User activation required before first `Translator.create()`
+- Models download per language pair (monitored via `monitor` callback)
 - Reuse translator instances for same language pair
+- Use Language Detector API when source language is unknown
+- Handle failed downloads gracefully (rejected promise)
 
 ---
 

@@ -1,17 +1,29 @@
 # AI Prompts and Strategy
 
-Last updated: 2025-10-18
+Last updated: 2025-01-29
 
 
 ## API mapping
-- Summaries: Summarizer API (type: tldr/key-points/teaser/headline; length: short/medium/long; format: markdown/plain-text; outputLanguage: user-selected, default en)
-- MCQ/Flashcards: Prompt API with structured output (JSON Schema; outputLanguage: user-selected)
-- Reports: Prompt API synthesis across multiple sources (outputLanguage: user-selected)
-- Optional: Writer/Rewriter for polishing; Proofreader/Translator for cleanup/translation; Translator API for switching output language on demand
+- **Summaries**: Summarizer API (type: tldr/key-points/teaser/headline; length: short/medium/long; format: markdown/plain-text; outputLanguage: user-selected, default en)
+- **MCQ/Flashcards**: Prompt API (LanguageModel) with structured output (JSON Schema; outputLanguage: user-selected)
+- **Reports**: Prompt API synthesis across multiple sources with custom instructions (outputLanguage: user-selected)
+- **Translation**: Translator API for selected text; displays in overlay; no history saved
+- **Proofreading**: Proofreader API for selected text; shows corrections with explanations; displays in overlay; no history saved; requires Chrome 141+ and origin trial
+- **Rewriting**: Rewriter API for selected text with tone/length/format options; displays in overlay; no history saved; requires Chrome 137+ and origin trial
+- **Writer API**: Not currently used (reserved for future features)
+
+## Correct API Namespaces (CRITICAL)
+- ❌ WRONG: `self.ai.languageModel`, `self.translation`, `window.ai`
+- ✅ CORRECT: `LanguageModel` (global), `Translator` (global), `Summarizer` (global), `Rewriter` (global), `Proofreader` (global)
 
 ## Availability and user activation
-- Call availability() first; if downloadable/downloading, show monitor(downloadprogress) and request a click to start create()
-- Never run in service worker; only document contexts
+- Call availability() before creating sessions/translators
+- **Correct availability states**:
+  - LanguageModel: Returns `'available'` when ready
+  - Translator: Returns `'available'` (hides download status for privacy)
+  - Summarizer/Rewriter/Proofreader: Return `'readily'`, `'after-download'`, or `'no'`
+- If not available: show requirements and disable action
+- Never run in service worker; only document contexts (popup, content script)
 
 
 ## AI pipeline: content extraction, cleanup, and chunking
@@ -106,17 +118,47 @@ The AI pipeline has been fully implemented in `utils/content-extractor.js` and i
 
 
 ## Prompts
-- All prompts must specify output language (outputLanguage: user-selected, default en)
-- Flashcards (Prompt API):
-  - System: "You are a skilled educator. Generate high-quality multiple-choice questions (MCQ) from the provided text."
-  - User: text + constraints (count, difficulty, no trivia, plausible distractors)
-  - ResponseConstraint: schema
-- Report synthesis (Prompt API):
-  - System: "You are a senior analyst. Write a cohesive report using the style and tone from the user's profile."
-  - User: list of sources {title, url, excerpt or per-source summary}; desired outline/length; citation style; language
-  - Ask for markdown output with section headings and inline links
-- Summaries (Summarizer API): set type/length/format/outputLanguage at create(); pass sharedContext for audience
-- Translator API: allow user to switch output language for any result; translate summaries, flashcards, or reports on demand
+
+### Summaries (Summarizer API)
+- Set type/length/format/outputLanguage at create()
+- Pass sharedContext for audience if needed
+- Always specify outputLanguage (defaults to 'en')
+
+### Flashcards (Prompt API)
+- System: "You are a skilled educator. Generate high-quality multiple-choice questions (MCQ) from the provided text."
+- User: text + constraints (count, difficulty, no trivia, plausible distractors)
+- ResponseConstraint: JSON schema with question/options/answer/explanation
+- Specify outputLanguage in session creation
+
+### Report Synthesis (Prompt API)
+- System: "You are a senior analyst. Write a cohesive report synthesizing multiple sources."
+- User: list of sources {title, url, summary}, custom instructions (from textarea), citation style, language
+- Custom instructions appended to prompt: "Additional Instructions:\n{customInstructions}"
+- Ask for markdown output with section headings and inline links
+- References section automatically added at end
+
+### Translation (Translator API)
+- Used for selected text only
+- createTranslator({ sourceLanguage: 'en', targetLanguage: userSelected })
+- Display original and translated text in overlay
+- No history saved
+
+### Proofreading (Proofreader API)
+- Used for selected text only
+- create({ expectedInputLanguages: ['en'] })
+- Result contains: `correctedInput` (string) and `corrections` (array)
+- Each correction has: startIndex, endIndex, explanation, type
+- Display original, corrected text, and corrections list in overlay
+- No history saved
+
+### Rewriting (Rewriter API)
+- Used for selected text only
+- create({ tone, length, format, expectedInputLanguages: ['en'] })
+- Tone: 'more-formal' | 'as-is' | 'more-casual'
+- Length: 'shorter' | 'as-is' | 'longer'
+- Format: 'as-is' | 'markdown' | 'plain-text'
+- Display original and rewritten text in overlay
+- No history saved
 
 ## Safety and content policy
 - Respect Google Generative AI Prohibited Uses Policy
